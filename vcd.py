@@ -1,30 +1,3 @@
-#!/usr/bin/env python
-"""
-Pipeline visualization generator (re-indexed/synthetic PC mapping).
-
-**What's new in this version (modified vcd14.py):**
-1. **Instructions are fetched directly from VCD signals**, not from BinaryFile.txt.
-   - Specifically from:
-     - "HazardDetectionRV32I.core.IFBarrier.io_inst_out"
-     - "HazardDetectionRV32I.core.IDBarrier.instReg"
-     - "HazardDetectionRV32I.core.EXBarrier.instReg"
-     - "HazardDetectionRV32I.core.MEMBarrier.instReg"
-     - "HazardDetectionRV32I.core.WBBarrier.instReg"
-2. **Row count limited to unique PCs observed in VCD.**
-3. **Re-indexed sequential PCs starting at 0x00000000** are assigned to your instructions *in the order their corresponding actual PC value first appears in any VCD stage signal*. This is done to achieve human-readable, sequentially incrementing PC labels in the output.
-   - The actual PC for instruction '00000013' is explicitly mapped to synthetic PC 0x00000000.
-4. Pipeline activity from the VCD is mapped **in program-order-of-first-appearance** onto these re-indexed PCs. That means: the *first unique actual PC value observed* in the VCD is treated as *instruction 0*, the second unique PC observed as *instruction 1*, etc., and we LABEL those rows using the re-indexed PC addresses (0x00000000, 0x00000004, ...) so that your HTML shows exactly the format you requested: `PC_0xXXXXXXXX | XXXXXXXX` (where XXXXXXXX is the instruction hex from VCD).
-5. **Capstone disassembly (if installed) is now used only in tooltips and the summary print**, the **main row label remains PC | HEX instruction** as requested.
-6. STALL detection retained (ID/EX repeats). No FLUSH marking.
-7. **Tooltips only appear on 'ID' stage cells.**
-
-Outputs:
-  - pipeline_matrix.csv          (Re-indexed PC rows, cycle columns, stage cells)
-  - pipeline_matrix.html         (color, tooltips, search; rows show Re-indexed PC | HEX)
-  - (No VCD output file will be generated in this version)
-
-"""
-
 from vcdvcd import VCDVCD
 import pandas as pd
 from collections import defaultdict
@@ -718,3 +691,4 @@ for i in range(min(15, len(delayed_ex_values_by_cycle))):
         print(f"Cycle {i}: Incomplete data (or no previous cycle data for cycle 0)")
 print("----------------------------------------------------------")
 webbrowser.open_new_tab(output_html)
+
