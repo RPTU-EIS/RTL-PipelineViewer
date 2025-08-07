@@ -1,19 +1,3 @@
-#!/usr/bin/env python
-"""
-Pipeline visualization generator: Interactive Animation View with Hazard Detection and Register State.
-
-This script generates an HTML file that visualizes the pipeline activity
-and internal register states as an interactive animation, allowing users to
-step through each clock cycle. It includes logic to detect and display
-forwarding hazards based on VCD signals.
-
-It reuses VCD parsing logic and prepares data to be consumed by JavaScript
-for dynamic rendering.
-
-Outputs:
-  - pipeline_animation.html (HTML file with interactive animation and register view)
-"""
-
 from vcdvcd import VCDVCD
 import pandas as pd
 from collections import defaultdict
@@ -571,4 +555,5 @@ with open(output_html, "w") as f:
     f.write(html_content)
 
 print(f"✅ Successfully generated '{output_html}'. Open this file in your web browser to view the animation.")
+
 webbrowser.open_new_tab(output_html)
