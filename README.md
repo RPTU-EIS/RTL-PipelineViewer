@@ -7,7 +7,7 @@ This Python script generates an interactive HTML animation of a RISC-V processor
 
 The final output is an HTML file that opens automatically in your web browser, allowing you to step through the simulation cycle by cycle.
 
-
+---------------
 2. Requirements & Installation
 
 To run this script, you will need Python 3 and a few external libraries.
@@ -39,9 +39,9 @@ The other imported modules (`os`, `re`, `json`, `webbrowser`, `collections`) are
     python vcd.py
     
     The script will print its progress to the console as it loads the VCD, detects cycles and extracts data.
-
+---------------
 4.  **View the Output**: Once the script finishes, it will automatically generate a file named `pipeline_animation.html` and open it in your default web browser. You can then use the on-screen buttons (Previous, Next, Play, Restart) to navigate the pipeline animation.
-
+---------------
 5. Configuration
 ------------------
 The script is pre-configured for a specific hardware design's signal names. If your VCD file uses different signal paths, you will need to edit the Python script.
