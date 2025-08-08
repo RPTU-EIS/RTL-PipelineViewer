@@ -30,13 +30,13 @@ The other imported modules (`os`, `re`, `json`, `webbrowser`, `collections`) are
 
 3. How to Use
 ---------------
-1.  **Place VCD File**: Make sure you have a simulation output file named `dump.vcd` in the same directory as the Python script.
+1.  **Place VCD File**: Make sure you have a vcd file named `dump.vcd` in the same directory as the Python script.
 
-2.  **Run the Script**: Open a terminal or command prompt, navigate to the directory containing the script, and execute it with the following command:
+2.  **Run the Script**: Open a terminal or command prompt, navigate to the directory containing the script and execute it with the following command:
     
-    python mp4.py
+    python mp4.py (Pipeline Animation with Register State)
 
-    python vcd.py
+    python vcd.py  (Pipeline Visualization (PC | Instruction / No. of cycle)
     
     The script will print its progress to the console as it loads the VCD, detects cycles and extracts data.
 ---------------
