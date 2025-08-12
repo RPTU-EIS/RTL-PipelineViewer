@@ -1,0 +1,101 @@
+﻿✅ FUNCTIONAL ENHANCEMENTS
+1. Color-Code Instructions by Type
+Green for arithmetic/logical (e.g., add, sub)
+
+Blue for memory operations (lw, sw)
+
+Orange for branches (beq, bne)
+
+Red for jumps (jal, jalr)
+
+🔧 Implementation: Add a simple opcode_type extractor using the disassembly and map it to a color in the HTML cell background.
+
+2. Timeline Bar / Gantt-Style View
+Display a horizontal bar per instruction across cycles instead of matrix.
+
+Shows instruction lifespan clearly (fetch → writeback).
+
+Easy to spot hazards visually.
+
+📚 Especially useful for teaching or debugging pipeline stalls.
+
+3. Highlight Stalls or Bubbles
+Detect pipeline stalls (e.g., from repeated PCs or pipeline freezing).
+
+Highlight those cells as gray or striped.
+
+Add tooltip: "Pipeline Stall due to hazard".
+
+4. Add Cycle Count Per Instruction
+In a new column, display:
+
+Total cycles the instruction spent in pipeline
+
+Or time to completion
+
+Could be useful for IPC (instructions per cycle) metrics or performance analysis.
+
+📊 DATA INTEGRATION IDEAS
+5. Display Register Writebacks
+In WB stage, show which register was written to and with what value (if signal available).
+
+Example tooltip:
+
+makefile
+Copy
+Edit
+Stage: WB
+ASM: addi x1, x0, 42
+→ x1 = 42
+Use VCD signals like regFile.writeAddress and writeData if available.
+
+6. Error Detection / Warnings
+Warn when:
+
+Instruction changes but PC doesn't.
+
+Instruction decoded as unknown.
+
+Pipeline stalls unexpectedly.
+
+Add visual flags or export them into a log/CSV.
+
+🧠 UX / EDUCATION IMPROVEMENTS
+7. Search or Filter Instructions
+Add textbox to search for:
+
+Specific instruction (addi)
+
+Specific PC (0x00000100)
+
+Or register involved (x1)
+
+Make your HTML interactive using JS (e.g., DataTables or a React frontend later).
+
+8. Export to Animation
+Export instruction execution as GIF/MP4, one frame per cycle.
+
+Useful for presentation, education, or debugging without re-running everything.
+
+🛠 DEVELOPMENT TOOLING IDEAS
+9. Real-Time Updates (Live VCD Monitoring)
+Instead of parsing post-simulation, integrate into simulator's live output.
+
+Update pipeline view in real time as the simulation progresses.
+
+Could be done via WebSocket, or periodically refresh from file.
+
+10. ISA-Aware Extensions
+Highlight invalid instructions (e.g., compressed if not supported).
+
+Show exception conditions (e.g., illegal access, divide by zero).
+
+Enrich tool with RISC-V ISA knowledge.
+
+🚀 BONUS IDEA: Pipeline Replay Mode
+Let the user step forward/backward cycle-by-cycle like a debugger.
+
+Use ← and → keys.
+
+Show how instructions shift in the pipeline in slow motion.
+
