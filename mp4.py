@@ -177,6 +177,16 @@ def convert_hex_immediates_to_decimal(disasm: str) -> str:
         return str(value)
     return re.sub(r'0x[0-9a-fA-F]+', replace_hex, disasm)
 
+# New: Register read/write indicators
+reg_highlight_data_by_cycle = []
+for cycle_idx in range(num_cycles):
+    reg_highlight_data_by_cycle.append({
+        "id_rs1": delayed_hazard_data_by_cycle[cycle_idx].get("rs1_addr"),
+        "id_rs2": delayed_hazard_data_by_cycle[cycle_idx].get("rs2_addr"),
+        "wb_rd": delayed_wb_values_by_cycle[cycle_idx].get("rd")
+    })
+
+
 # --- Collect PC → Instruction Hex and Disassemble ---
 actual_pc_to_instr_raw = {}
 actual_pc_to_instr_hex_display = {}
@@ -342,8 +352,9 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 #speedValue {{ font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }}
 .content-wrapper {{ display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }}
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
-.pipeline-grid {{ grid-template-columns: 390px repeat(5, 140px); }}
-.register-grid {{ grid-template-columns: 120px 200px; }}
+.pipeline-grid {{ grid-template-columns: 390px repeat(5, 120px); }}
+.register-grid {{ grid-template-columns: 120px 190px 90px 90px;}}
+.grid-cell span {{    font-size: 18px;}}
 .grid-header, .grid-cell {{ padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }}
 .grid-header {{ background-color: #ddd; font-weight: bold; }}
 .instruction-label {{ text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }}
@@ -372,7 +383,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
     <button id="nextBtn">Next</button>
     <button id="playPauseBtn">Play</button>
-    <button id="toggleArrowsBtn">Hide Arrows</button>
+    <button id="toggleArrowsBtn">Hide Forwaring</button>
     <button id="restartBtn">Restart</button>
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
@@ -397,7 +408,10 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <div class="register-container">
         <h3>Register File State</h3>
         <div id="registerTable" class="register-grid">
-            <div class="grid-header">Register</div><div class="grid-header">Value</div>
+            <div class="grid-header">Register</div>
+            <div class="grid-header">Value</div>
+            <div class="grid-header">Read (ID)</div>
+            <div class="grid-header">Write (WB)</div>
         </div>
     </div>
 </div>
@@ -407,7 +421,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="nextBtn">Next</button>
     <button id="playPauseBtn">Play</button>
     <button id="restartBtn">Restart</button>
-    <button id="toggleArrowsBtn">Hide Arrows</button>
+    <button id="toggleArrowsBtn">Hide Forwaring</button>
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
         <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
@@ -422,6 +436,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     const numCycles = {num_cycles};
     const colorMap = {color_map_js};
     const vcd_actual_to_synthetic_pc_map = {vcd_actual_to_synthetic_pc_map_js};
+    const regHighlightData = {reg_highlight_data_js};
     const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
     let currentCycle = 0, animationInterval = null, animationSpeed = 500, showArrows = true;
     
@@ -467,10 +482,21 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             nameCell.className = 'grid-cell register-name-cell';
             nameCell.textContent = `x${{i}} (${{abiNames[i]}})`;
             registerTable.appendChild(nameCell);
+
             const valueCell = document.createElement('div');
             valueCell.className = 'grid-cell register-value-cell';
             valueCell.id = `reg-val-${{i}}`;
             registerTable.appendChild(valueCell);
+
+            const readCell = document.createElement('div');
+            readCell.className = 'grid-cell';
+            readCell.id = `reg-read-${{i}}`;
+            registerTable.appendChild(readCell);
+
+            const writeCell = document.createElement('div');
+            writeCell.className = 'grid-cell';
+            writeCell.id = `reg-write-${{i}}`;
+            registerTable.appendChild(writeCell);
         }}
     }}
 
@@ -531,6 +557,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     function updateRegisterTable() {{
         const currentRegs = registerData[currentCycle] || {{}};
         const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {{}};
+        const highlights = regHighlightData[currentCycle] || {{}};
 
         for (let i = 0; i < 32; i++) {{
             const valCell = document.getElementById(`reg-val-${{i}}`);
@@ -557,6 +584,17 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             }}
 
             valCell.textContent = displayValue;
+            const readCell = document.getElementById(`reg-read-${{i}}`);
+            const writeCell = document.getElementById(`reg-write-${{i}}`);
+            readCell.textContent = '';
+            writeCell.textContent = '';
+
+            if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
+                readCell.innerHTML = '<span style="color: #007BFF;">●</span>';
+            }}
+            if (i !== 0 && highlights.wb_rd === i) {{
+                writeCell.innerHTML = '<span style="color: #FF4500;">●</span>';
+            }}
 
             // highlight if value changed
             valCell.classList.toggle('changed', currentVal !== prevVal);
@@ -640,7 +678,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     }});
     document.getElementById('toggleArrowsBtn').addEventListener('click', () => {{
         showArrows = !showArrows;
-        document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Arrows' : 'Show Arrows';
+        document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Forwaring' : 'Show Forwaring';
         updateDisplay(); // re-render (clears or draws arrows accordingly)
     }});
 
@@ -656,12 +694,13 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     instruction_labels_js=json.dumps(instruction_labels_for_js),
     register_data_js=json.dumps(delayed_register_values_by_cycle),
     color_map_js=color_map_js,
-    vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map)
+    vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map),
+    reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
 )
 
 # --- Write the final HTML file ---
 print(f"Writing output to {output_html}")
-with open(output_html, "w") as f:
+with open(output_html, "w",  encoding="utf-8") as f:
     f.write(html_content)
 
 print(f"✅ Successfully generated '{output_html}'. Open this file in your web browser to view the animation.")
