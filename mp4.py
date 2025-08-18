@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 
 from vcdvcd import VCDVCD
 import pandas as pd
@@ -7,7 +5,7 @@ from collections import defaultdict
 from capstone import Cs, CS_ARCH_RISCV, CS_MODE_RISCV32
 import os
 import re
-import json # Import json for embedding data
+import json 
 import webbrowser
 
 # Initialize Capstone for RISC-V 32-bit disassembly
@@ -16,7 +14,7 @@ md.detail = True
 
 # --- Configuration ---
 VCD_FILE = "dump.vcd" # Your VCD file
-CLOCK_SIGNAL = None # Auto-detects if None
+CLOCK_SIGNAL = None 
 stage_signals = { # PC signals for each pipeline stage
     "IF": "HazardDetectionRV32I.core.IFBarrier.io_pc_out",
     "ID": "HazardDetectionRV32I.core.IDBarrier.pcReg",
@@ -39,7 +37,7 @@ ex_signals = {
 }
 wb_signals = {
     "rd": "HazardDetectionRV32I.core.WB.io_rd",
-    "wb_data": "HazardDetectionRV32I.core.WB.io_check_res" # Assuming a signal for data written back
+    "wb_data": "HazardDetectionRV32I.core.WB.io_check_res" 
 }
 
 # --- Signals for Hazard Detection and Forwarding Unit ---
@@ -47,6 +45,7 @@ hazard_signals = {
     # Register addresses for operands in ID/EX stage
     "rs1_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
     "rs2_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
+    "opcode": "HazardDetectionRV32I.core.ID.opcode",
 
     # Destination register addresses from MEM and WB stages
     "rd_mem_addr": "HazardDetectionRV32I.core.EXBarrier.io_outRD",
@@ -118,6 +117,8 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
             values.append(default_val)
     return values
 
+opcode_vals = extract_signal_at_cycles(hazard_signals["opcode"], default_val=0, base=16)
+
 # --- Extract Signal Data ---
 ex_values_by_cycle = [{} for _ in range(num_cycles)]
 wb_values_by_cycle = [{} for _ in range(num_cycles)]
@@ -179,11 +180,25 @@ def convert_hex_immediates_to_decimal(disasm: str) -> str:
 
 # New: Register read/write indicators
 reg_highlight_data_by_cycle = []
-for cycle_idx in range(num_cycles):
+
+for i in range(num_cycles):
+    rs1 = delayed_hazard_data_by_cycle[i].get("rs1_addr")
+    rs2 = delayed_hazard_data_by_cycle[i].get("rs2_addr")
+    rd = delayed_wb_values_by_cycle[i].get("rd")
+    opcode = opcode_vals[i]
+
+    # Convert opcode hex string to int if needed
+    if isinstance(opcode, str):
+        opcode = int(opcode, 16)
+
+    # Only keep rs2 if opcode uses it
+    opcodes_that_use_rs2 = {0x33, 0x23, 0x63}  # R-type, store, branch
+    rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
+
     reg_highlight_data_by_cycle.append({
-        "id_rs1": delayed_hazard_data_by_cycle[cycle_idx].get("rs1_addr"),
-        "id_rs2": delayed_hazard_data_by_cycle[cycle_idx].get("rs2_addr"),
-        "wb_rd": delayed_wb_values_by_cycle[cycle_idx].get("rd")
+        "id_rs1": rs1,
+        "id_rs2": rs2_final,
+        "wb_rd": rd
     })
 
 
@@ -320,6 +335,18 @@ for cycle_idx in range(num_cycles):
                     display = f"EX<br>{op_a} {operator_html} {op_b} = {res}"
                     # Tooltip shows the plain (unescaped) version
                     tooltip += f"\n--- ALU Op ---\n{op_a} {operator_plain} {op_b} = {res}"
+            elif stage == "WB":
+                wb_data = delayed_wb_values_by_cycle[cycle_idx].get("wb_data")
+                wb_rd = delayed_wb_values_by_cycle[cycle_idx].get("rd")
+
+                if wb_data is not None and wb_rd is not None and wb_rd != 0:
+                    try:
+                        wb_val = int(wb_data)
+                        display = f"WB<br>x{wb_rd} = {wb_val}"
+                        tooltip += f"\n--- Writeback ---\nx{wb_rd} = {wb_val}"
+                    except:
+                        pass
+
 
 
             pipeline_data_for_js[synth_pc][cycle_idx] = {
@@ -354,12 +381,22 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
 .pipeline-grid {{ grid-template-columns: 390px repeat(5, 120px); }}
 .register-grid {{ grid-template-columns: 120px 190px 90px 90px;}}
-.grid-cell span {{    font-size: 18px;}}
+//.grid-cell span {{    font-size: 18px; font-weight: bold;}}
+.grid-cell.stage-cell {{
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.5;
+    font-family: "Courier New", monospace;
+    padding: 10px;
+    text-align: center;
+    white-space: normal;
+}}
+
 .grid-header, .grid-cell {{ padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }}
 .grid-header {{ background-color: #ddd; font-weight: bold; }}
 .instruction-label {{ text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }}
 .stage-cell {{ height: 50px; position: relative; }}
-.stage-content {{ width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }}
+.stage-content {{ width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 13px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }}
 .tooltip-text {{ visibility: hidden; background-color: #555; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; width: max-content; white-space: pre-wrap; }}
 .stage-content:hover .tooltip-text {{ visibility: visible; opacity: 1; }}
 .legend {{ margin: 20px auto; display: flex; justify-content: center; gap: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; width: fit-content; flex-wrap: wrap; }}
@@ -380,7 +417,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 <h2>Pipeline Animation with Register State</h2>
 <div class="controls">
     <button id="prevBtn">Previous</button>
-    <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
+    <span id="cycleCounter">Cycle 0 / {{num_cycles}}</span>
     <button id="nextBtn">Next</button>
     <button id="playPauseBtn">Play</button>
     <button id="toggleArrowsBtn">Hide Forwaring</button>
