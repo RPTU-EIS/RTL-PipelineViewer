@@ -45,7 +45,7 @@ hazard_signals = {
     # Register addresses for operands in ID/EX stage
     "rs1_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
     "rs2_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
-    "opcode": "HazardDetectionRV32I.core.ID.opcode",
+    "opcode":   "HazardDetectionRV32I.core.ID.opcode",
 
     # Destination register addresses from MEM and WB stages
     "rd_mem_addr": "HazardDetectionRV32I.core.EXBarrier.io_outRD",
@@ -117,7 +117,9 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
             values.append(default_val)
     return values
 
-opcode_vals = extract_signal_at_cycles(hazard_signals["opcode"], default_val=0, base=16)
+instr_vals = extract_signal_at_cycles("HazardDetectionRV32I.core.IDBarrier.instReg", default_val=0, base=2)
+
+
 
 # --- Extract Signal Data ---
 ex_values_by_cycle = [{} for _ in range(num_cycles)]
@@ -151,6 +153,8 @@ for reg_name, signal_name in register_signals.items():
 print("✅ Register data extracted.")
 
 # --- Apply Delays for Correct Cycle Synchronization ---
+delayed_instr_vals = [None] + instr_vals[:-1]
+
 delayed_ex_values_by_cycle = [{} for _ in range(num_cycles)]
 for i in range(1, num_cycles):
     delayed_ex_values_by_cycle[i] = ex_values_by_cycle[i-1]
@@ -179,27 +183,35 @@ def convert_hex_immediates_to_decimal(disasm: str) -> str:
     return re.sub(r'0x[0-9a-fA-F]+', replace_hex, disasm)
 
 # New: Register read/write indicators
+
+
 reg_highlight_data_by_cycle = []
+opcodes_that_use_rs2 = {0x33, 0x23, 0x63}  # R-type, store, branch
 
 for i in range(num_cycles):
     rs1 = delayed_hazard_data_by_cycle[i].get("rs1_addr")
     rs2 = delayed_hazard_data_by_cycle[i].get("rs2_addr")
-    rd = delayed_wb_values_by_cycle[i].get("rd")
-    opcode = opcode_vals[i]
+    rd  = delayed_wb_values_by_cycle[i].get("rd")
+    
 
-    # Convert opcode hex string to int if needed
-    if isinstance(opcode, str):
-        opcode = int(opcode, 16)
+    # Decode instruction → extract opcode
+    try:
+        full_instr = int(delayed_instr_vals[i], 16) if isinstance(delayed_instr_vals[i], str) else int(delayed_instr_vals[i])
+        opcode = full_instr & 0x7F  # This correctly extracts the 7-bit opcode
+    except (ValueError, TypeError):
+        opcode = None
 
-    # Only keep rs2 if opcode uses it
-    opcodes_that_use_rs2 = {0x33, 0x23, 0x63}  # R-type, store, branch
     rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
+
+    print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
 
     reg_highlight_data_by_cycle.append({
         "id_rs1": rs1,
         "id_rs2": rs2_final,
         "wb_rd": rd
     })
+    print(f"Cycle {i}: full_instr={hex(full_instr) if opcode is not None else 'None'}, opcode={opcode}")
+
 
 
 # --- Collect PC → Instruction Hex and Disassemble ---
@@ -353,6 +365,8 @@ for cycle_idx in range(num_cycles):
                 "stage": stage, "tooltip": tooltip, "display_text": display,
                 "hazard_info": hazard_info, "is_hazard_source": is_source
             }
+print(f"Cycle {cycle_idx}: rs1={rs1}, rs2={rs2}, rd={rd}")
+
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
 
@@ -367,7 +381,7 @@ for synth_pc in sorted_synth_pcs:
         instruction_labels_for_js.append(f"PC_0x{synth_pc:08x} | {hex_display} ({asm_display})")
 
 # --- HTML Generation ---
-color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#b366ff","WB":"#ff4d4d"})
+color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
 
 html_content = """
 <html><head><title>Pipeline & Register Animation</title>
@@ -380,9 +394,9 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 .content-wrapper {{ display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }}
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
 .pipeline-grid {{ grid-template-columns: 390px repeat(5, 120px); }}
-.register-grid {{ grid-template-columns: 120px 190px 90px 90px;}}
-//.grid-cell span {{    font-size: 18px; font-weight: bold;}}
-.grid-cell.stage-cell {{
+.register-grid {{ grid-template-columns: 120px 190px 95px 95px;}}
+.grid-cell span {{    font-size: 16px; font-weight: bold;}}
+//.grid-cell.stage-cell {{
     font-size: 30px;
     font-weight: 500;
     line-height: 1.5;
@@ -391,12 +405,21 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     text-align: center;
     white-space: normal;
 }}
-
+.register-grid .grid-cell {{
+    height: 20px;             
+    line-height: 40px;        
+    overflow: hidden;          
+}}
+.register-grid .grid-cell {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}}
 .grid-header, .grid-cell {{ padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }}
 .grid-header {{ background-color: #ddd; font-weight: bold; }}
 .instruction-label {{ text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }}
 .stage-cell {{ height: 50px; position: relative; }}
-.stage-content {{ width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 13px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }}
+.stage-content {{ width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }}
 .tooltip-text {{ visibility: hidden; background-color: #555; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; width: max-content; white-space: pre-wrap; }}
 .stage-content:hover .tooltip-text {{ visibility: visible; opacity: 1; }}
 .legend {{ margin: 20px auto; display: flex; justify-content: center; gap: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; width: fit-content; flex-wrap: wrap; }}
@@ -407,6 +430,10 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 .register-value-cell.changed {{ background-color: #FFD700; transition: background-color 0.1s ease-in; }}
 .hazard-source-highlight {{ border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7); }}
 .forwarding-destination-highlight {{ border: 3px solid #007BFF !important; box-shadow: 0 0 10px rgba(0, 123, 255, 0.7); background-color: #cce5ff !important; }}
+.highlighted-search {{
+    background-color: yellow !important;
+    border: 2px solid orange !important;
+}}
 /* --- MODIFICATION: Styles for dataflow arrows --- */
 #arrow-svg {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }}
 .arrow {{ stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead); }}
@@ -420,13 +447,17 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <span id="cycleCounter">Cycle 0 / {{num_cycles}}</span>
     <button id="nextBtn">Next</button>
     <button id="playPauseBtn">Play</button>
-    <button id="toggleArrowsBtn">Hide Forwaring</button>
+    
     <button id="restartBtn">Restart</button>
+    <button id="toggleArrowsBtn">Hide Forwaring</button>    
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
         <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
         <span id="speedValue">500ms</span>
     </div>
+    <input type="text" id="searchBox" placeholder="Search PC or instruction...">
+    <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
+
 </div>
 
 <div class="legend">
@@ -452,19 +483,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         </div>
     </div>
 </div>
-<div class="controls">
-    <button id="prevBtn">Previous</button>
-    <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
-    <button id="nextBtn">Next</button>
-    <button id="playPauseBtn">Play</button>
-    <button id="restartBtn">Restart</button>
-    <button id="toggleArrowsBtn">Hide Forwaring</button>
-    <div class="speed-control-container">
-        <label for="speedControl">Speed:</label>
-        <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
-        <span id="speedValue">500ms</span>
-    </div>
-</div>
+
 
 <script>
     const pipelineData = {pipeline_data_js};
@@ -487,9 +506,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     const restartBtn = document.getElementById('restartBtn');
     const speedControl = document.getElementById('speedControl');
     const speedValue = document.getElementById('speedValue');
+    const searchBox = document.getElementById('searchBox');
 
     // --- MODIFICATION: Refactored to build the static grid once ---
     function populateStaticGrid() {{
+        const filterText = searchBox.value.toLowerCase();
         // Pipeline Headers
         ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(text => {{
             const header = document.createElement('div');
@@ -590,6 +611,66 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             }});
         }}
 
+        function filterPipelineInstruction() {{
+            const query = searchBox.value.toLowerCase().trim();
+            if (!query) return;
+
+
+            let matchFound = false;
+
+
+            instructionLabels.forEach((label, idx) => {{
+            const synthPc = idx * 4;
+            const labelLower = label.toLowerCase();
+            const pcText = `0x${{synthPc.toString(16).padStart(8, '0')}}`;
+            const rowIds = [`instr-label-${{synthPc}}`];
+            for (let i = 0; i < 5; i++) {{
+            rowIds.push(`stage-cell-${{synthPc}}-${{i}}`);
+            }}
+
+
+            const match = labelLower.includes(query) || pcText.includes(query);
+            matchFound = matchFound || match;
+
+
+            rowIds.forEach(id => {{
+            const elem = document.getElementById(id);
+            if (elem) {{
+            elem.style.display = match ? '' : 'none';
+            }}
+            }});
+            }});
+
+
+            if (!matchFound) {{
+            alert("❌ No matching instruction or PC found.");
+            }}
+            }}
+
+
+            // 🟡 Add listener for Enter key
+            searchBox.addEventListener('keydown', (e) => {{
+            if (e.key === 'Enter') {{
+            filterPipelineInstruction();
+            }}
+            }});
+
+
+            // 🟡 Add reset function (optional)
+            function resetPipelineFilter() {{
+            instructionLabels.forEach((_, idx) => {{
+            const synthPc = idx * 4;
+            const rowIds = [`instr-label-${{synthPc}}`];
+            for (let i = 0; i < 5; i++) {{
+            rowIds.push(`stage-cell-${{synthPc}}-${{i}}`);
+            }}
+            rowIds.forEach(id => {{
+            const elem = document.getElementById(id);
+            if (elem) elem.style.display = '';
+            }});
+            }});
+            }}
+
     
     function updateRegisterTable() {{
         const currentRegs = registerData[currentCycle] || {{}};
@@ -627,10 +708,10 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             writeCell.textContent = '';
 
             if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
-                readCell.innerHTML = '<span style="color: #007BFF;">●</span>';
+                readCell.innerHTML = '<span style="color: #007BFF;font-size: 20px;">●</span>';
             }}
             if (i !== 0 && highlights.wb_rd === i) {{
-                writeCell.innerHTML = '<span style="color: #FF4500;">●</span>';
+                writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
             }}
 
             // highlight if value changed
@@ -704,6 +785,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     nextBtn.addEventListener('click', nextCycle);
     restartBtn.addEventListener('click', restartAnimation);
     playPauseBtn.addEventListener('click', () => animationInterval ? stopAnimation() : startAnimation());
+    searchBox.addEventListener('keydown', (e) => {{
+    if (e.key === 'Enter') {{
+    filterPipelineInstruction();
+    }}
+    }});
     speedControl.addEventListener('input', () => {{
         animationSpeed = speedControl.value;
         speedValue.textContent = `${{animationSpeed}}ms`;

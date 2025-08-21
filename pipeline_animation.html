@@ -1,0 +1,428 @@
+
+<html><head><title>Pipeline & Register Animation</title>
+<style>
+body { font-family: sans-serif; margin: 20px; } h2, h3 { text-align: center; }
+.controls { text-align: center; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls button { padding: 10px 20px; font-size: 16px; cursor: pointer; } #cycleCounter { font-size: 18px; font-weight: bold; }
+.speed-control-container { display: flex; align-items: center; gap: 5px; }
+#speedValue { font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }
+.content-wrapper { display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }
+.pipeline-grid, .register-grid { display: grid; border: 1px solid #ccc; width: fit-content; }
+.pipeline-grid { grid-template-columns: 390px repeat(5, 120px); }
+.register-grid { grid-template-columns: 120px 190px 95px 95px;}
+.grid-cell span {    font-size: 16px; font-weight: bold;}
+//.grid-cell.stage-cell {
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.5;
+    font-family: "Courier New", monospace;
+    padding: 10px;
+    text-align: center;
+    white-space: normal;
+}
+.register-grid .grid-cell {
+    height: 20px;             
+    line-height: 40px;        
+    overflow: hidden;          
+}
+.register-grid .grid-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.grid-header, .grid-cell { padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }
+.grid-header { background-color: #ddd; font-weight: bold; }
+.instruction-label { text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }
+.stage-cell { height: 50px; position: relative; }
+.stage-content { width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }
+.tooltip-text { visibility: hidden; background-color: #555; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; width: max-content; white-space: pre-wrap; }
+.stage-content:hover .tooltip-text { visibility: visible; opacity: 1; }
+.legend { margin: 20px auto; display: flex; justify-content: center; gap: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; width: fit-content; flex-wrap: wrap; }
+.legend-item { display: inline-flex; align-items: center; gap: 8px; }
+.legend-color-box { width: 20px; height: 20px; border-radius: 4px; border: 2px solid; }
+.register-name-cell { font-family: monospace; text-align: left !important; padding-left: 10px !important; }
+.register-value-cell { font-family: monospace; }
+.register-value-cell.changed { background-color: #FFD700; transition: background-color 0.1s ease-in; }
+.hazard-source-highlight { border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7); }
+.forwarding-destination-highlight { border: 3px solid #007BFF !important; box-shadow: 0 0 10px rgba(0, 123, 255, 0.7); background-color: #cce5ff !important; }
+.highlighted-search {
+    background-color: yellow !important;
+    border: 2px solid orange !important;
+}
+/* --- MODIFICATION: Styles for dataflow arrows --- */
+#arrow-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.arrow { stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead); }
+@keyframes dash { to { stroke-dashoffset: -10; } }
+</style>
+</head>
+<body>
+<h2>Pipeline Animation with Register State</h2>
+<div class="controls">
+    <button id="prevBtn">Previous</button>
+    <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
+    <button id="nextBtn">Next</button>
+    <button id="playPauseBtn">Play</button>
+    
+    <button id="restartBtn">Restart</button>
+    <button id="toggleArrowsBtn">Hide Forwaring</button>    
+    <div class="speed-control-container">
+        <label for="speedControl">Speed:</label>
+        <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
+        <span id="speedValue">500ms</span>
+    </div>
+    <input type="text" id="searchBox" placeholder="Search PC or instruction...">
+    <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
+
+</div>
+
+<div class="legend">
+    <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
+    <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
+</div>
+
+<div class="content-wrapper">
+    <div class="pipeline-container">
+        <h3>Pipeline Stages</h3>
+        <div style="position: relative;">
+            <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
+            <svg id="arrow-svg"></svg>
+        </div>
+    </div>
+    <div class="register-container">
+        <h3>Register File State</h3>
+        <div id="registerTable" class="register-grid">
+            <div class="grid-header">Register</div>
+            <div class="grid-header">Value</div>
+            <div class="grid-header">Read (ID)</div>
+            <div class="grid-header">Write (WB)</div>
+        </div>
+    </div>
+</div>
+
+
+<script>
+    const pipelineData = {"0": [{"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000000\nInstruction: nop ", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000000\nInstruction: nop ", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000000\nInstruction: nop ", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000000\nInstruction: nop ", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000000\nInstruction: nop ", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "4": [null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000100\nInstruction: addi ra, zero, 4", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000100\nInstruction: addi ra, zero, 4", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000100\nInstruction: addi ra, zero, 4\n--- ALU Op ---\n0 + 4 = 4", "display_text": "EX<br>0 + 4 = 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000100\nInstruction: addi ra, zero, 4", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000100\nInstruction: addi ra, zero, 4\n--- Hazard Source ---\n--- Writeback ---\nx1 = 4", "display_text": "WB<br>x1 = 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "8": [null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00001000\nInstruction: addi sp, zero, 5", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00001000\nInstruction: addi sp, zero, 5", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00001000\nInstruction: addi sp, zero, 5\n--- ALU Op ---\n0 + 5 = 5", "display_text": "EX<br>0 + 5 = 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00001000\nInstruction: addi sp, zero, 5\n--- Hazard Source ---", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00001000\nInstruction: addi sp, zero, 5\n--- Writeback ---\nx2 = 5", "display_text": "WB<br>x2 = 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "12": [null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00001100\nInstruction: add gp, ra, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00001100\nInstruction: add gp, ra, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00001100\nInstruction: add gp, ra, sp\n--- ALU Op ---\n4 + 5 = 9", "display_text": "EX<br>4 + 5 = 9", "hazard_info": {"forwardA": 2, "forwardB": 1, "source_pc_mem": 8, "source_pc_wb": 4}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00001100\nInstruction: add gp, ra, sp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00001100\nInstruction: add gp, ra, sp\n--- Writeback ---\nx3 = 9", "display_text": "WB<br>x3 = 9", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "16": [null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00010000\nInstruction: addi tp, zero, 2047", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00010000\nInstruction: addi tp, zero, 2047", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00010000\nInstruction: addi tp, zero, 2047\n--- ALU Op ---\n0 + 2047 = 2047", "display_text": "EX<br>0 + 2047 = 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00010000\nInstruction: addi tp, zero, 2047", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00010000\nInstruction: addi tp, zero, 2047\n--- Hazard Source ---\n--- Writeback ---\nx4 = 2047", "display_text": "WB<br>x4 = 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "20": [null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00010100\nInstruction: addi t0, zero, 16", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00010100\nInstruction: addi t0, zero, 16", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00010100\nInstruction: addi t0, zero, 16\n--- ALU Op ---\n0 + 16 = 16", "display_text": "EX<br>0 + 16 = 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00010100\nInstruction: addi t0, zero, 16\n--- Hazard Source ---", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00010100\nInstruction: addi t0, zero, 16\n--- Writeback ---\nx5 = 16", "display_text": "WB<br>x5 = 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "24": [null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00011000\nInstruction: sub t1, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00011000\nInstruction: sub t1, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00011000\nInstruction: sub t1, tp, t0\n--- ALU Op ---\n2047 - 16 = 2031", "display_text": "EX<br>2047 - 16 = 2031", "hazard_info": {"forwardA": 2, "forwardB": 1, "source_pc_mem": 20, "source_pc_wb": 16}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00011000\nInstruction: sub t1, tp, t0\n--- Hazard Source ---", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00011000\nInstruction: sub t1, tp, t0\n--- Hazard Source ---\n--- Writeback ---\nx6 = 2031", "display_text": "WB<br>x6 = 2031", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null], "28": [null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00011100\nInstruction: xor t2, t1, gp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00011100\nInstruction: xor t2, t1, gp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00011100\nInstruction: xor t2, t1, gp\n--- ALU Op ---\n2031 ^ 9 = 2022", "display_text": "EX<br>2031 ^ 9 = 2022", "hazard_info": {"forwardA": 1, "forwardB": 0, "source_pc_mem": 24, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00011100\nInstruction: xor t2, t1, gp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00011100\nInstruction: xor t2, t1, gp\n--- Writeback ---\nx7 = 2022", "display_text": "WB<br>x7 = 2022", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null], "32": [null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00100000\nInstruction: or s0, t1, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00100000\nInstruction: or s0, t1, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00100000\nInstruction: or s0, t1, t0\n--- ALU Op ---\n2031 | 16 = 2047", "display_text": "EX<br>2031 | 16 = 2047", "hazard_info": {"forwardA": 2, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": 24}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00100000\nInstruction: or s0, t1, t0", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00100000\nInstruction: or s0, t1, t0\n--- Writeback ---\nx8 = 2047", "display_text": "WB<br>x8 = 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null], "36": [null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00100100\nInstruction: and s1, t1, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00100100\nInstruction: and s1, t1, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00100100\nInstruction: and s1, t1, t0\n--- ALU Op ---\n2031 & 16 = 0", "display_text": "EX<br>2031 &amp; 16 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00100100\nInstruction: and s1, t1, t0", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00100100\nInstruction: and s1, t1, t0\n--- Writeback ---\nx9 = 0", "display_text": "WB<br>x9 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null], "40": [null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00101000\nInstruction: sll a0, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00101000\nInstruction: sll a0, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00101000\nInstruction: sll a0, t2, sp\n--- ALU Op ---\n2022 << 5 = 64704", "display_text": "EX<br>2022 &lt;&lt; 5 = 64704", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00101000\nInstruction: sll a0, t2, sp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00101000\nInstruction: sll a0, t2, sp\n--- Writeback ---\nx10 = 64704", "display_text": "WB<br>x10 = 64704", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null], "44": [null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00101100\nInstruction: srl a1, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00101100\nInstruction: srl a1, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00101100\nInstruction: srl a1, t2, sp\n--- ALU Op ---\n2022 >> 5 = 63", "display_text": "EX<br>2022 &gt;&gt; 5 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00101100\nInstruction: srl a1, t2, sp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00101100\nInstruction: srl a1, t2, sp\n--- Writeback ---\nx11 = 63", "display_text": "WB<br>x11 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null, null], "48": [null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00110000\nInstruction: sra a2, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00110000\nInstruction: sra a2, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00110000\nInstruction: sra a2, t2, sp\n--- ALU Op ---\n2022 >>> 5 = 63", "display_text": "EX<br>2022 &gt;&gt;&gt; 5 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00110000\nInstruction: sra a2, t2, sp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00110000\nInstruction: sra a2, t2, sp\n--- Writeback ---\nx12 = 63", "display_text": "WB<br>x12 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null, null], "52": [null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00110100\nInstruction: slt a3, tp, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00110100\nInstruction: slt a3, tp, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00110100\nInstruction: slt a3, tp, tp\n--- ALU Op ---\n2047 < 2047 = 0", "display_text": "EX<br>2047 &lt; 2047 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00110100\nInstruction: slt a3, tp, tp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00110100\nInstruction: slt a3, tp, tp\n--- Writeback ---\nx13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null, null], "56": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00111000\nInstruction: slt a3, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00111000\nInstruction: slt a3, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00111000\nInstruction: slt a3, tp, t0\n--- ALU Op ---\n2047 < 16 = 0", "display_text": "EX<br>2047 &lt; 16 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00111000\nInstruction: slt a3, tp, t0", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00111000\nInstruction: slt a3, tp, t0\n--- Writeback ---\nx13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null, null], "60": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00111100\nInstruction: slt a3, t0, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00111100\nInstruction: slt a3, t0, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00111100\nInstruction: slt a3, t0, tp\n--- ALU Op ---\n16 < 2047 = 1", "display_text": "EX<br>16 &lt; 2047 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00111100\nInstruction: slt a3, t0, tp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00111100\nInstruction: slt a3, t0, tp\n--- Writeback ---\nx13 = 1", "display_text": "WB<br>x13 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null, null], "64": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01000000\nInstruction: sltu a3, tp, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01000000\nInstruction: sltu a3, tp, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01000000\nInstruction: sltu a3, tp, tp\n--- ALU Op ---\n2047 <u 2047 = 0", "display_text": "EX<br>2047 &lt;u 2047 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x01000000\nInstruction: sltu a3, tp, tp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x01000000\nInstruction: sltu a3, tp, tp\n--- Writeback ---\nx13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null, null], "68": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01000100\nInstruction: sltu a3, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01000100\nInstruction: sltu a3, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01000100\nInstruction: sltu a3, tp, t0\n--- ALU Op ---\n2047 <u 16 = 0", "display_text": "EX<br>2047 &lt;u 16 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x01000100\nInstruction: sltu a3, tp, t0", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x01000100\nInstruction: sltu a3, tp, t0\n--- Writeback ---\nx13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null, null], "72": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01001000\nInstruction: sltu a3, t0, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01001000\nInstruction: sltu a3, t0, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01001000\nInstruction: sltu a3, t0, tp\n--- ALU Op ---\n16 <u 2047 = 1", "display_text": "EX<br>16 &lt;u 2047 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x01001000\nInstruction: sltu a3, t0, tp", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x01001000\nInstruction: sltu a3, t0, tp\n--- Writeback ---\nx13 = 1", "display_text": "WB<br>x13 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, null], "76": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01001100\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01001100\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01001100\nInstruction: N/A_ASM\n--- ALU Op ---\n0 N/A_ASM 0 = 4294967295", "display_text": "EX<br>0 N/A_ASM 0 = 4294967295", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x01001100\nInstruction: N/A_ASM", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x01001100\nInstruction: N/A_ASM", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}], "80": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01010000\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01010000\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01010000\nInstruction: N/A_ASM\n--- ALU Op ---\n0 N/A_ASM 0 = 4294967295", "display_text": "EX<br>0 N/A_ASM 0 = 4294967295", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x01010000\nInstruction: N/A_ASM", "display_text": "MEM", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}], "84": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01010100\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01010100\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x01010100\nInstruction: N/A_ASM\n--- ALU Op ---\n0 N/A_ASM 0 = 4294967295", "display_text": "EX<br>0 N/A_ASM 0 = 4294967295", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}], "88": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01011000\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x01011000\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}], "92": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x01011100\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false}]};
+    const instructionLabels = ["PC_0x00000000 | 00000013 (nop )", "PC_0x00000004 | 00400093 (addi ra, zero, 4)", "PC_0x00000008 | 00500113 (addi sp, zero, 5)", "PC_0x0000000c | 002081b3 (add gp, ra, sp)", "PC_0x00000010 | 7ff00213 (addi tp, zero, 2047)", "PC_0x00000014 | 01000293 (addi t0, zero, 16)", "PC_0x00000018 | 40520333 (sub t1, tp, t0)", "PC_0x0000001c | 003343b3 (xor t2, t1, gp)", "PC_0x00000020 | 00536433 (or s0, t1, t0)", "PC_0x00000024 | 005374b3 (and s1, t1, t0)", "PC_0x00000028 | 00239533 (sll a0, t2, sp)", "PC_0x0000002c | 0023d5b3 (srl a1, t2, sp)", "PC_0x00000030 | 4023d633 (sra a2, t2, sp)", "PC_0x00000034 | 004226b3 (slt a3, tp, tp)", "PC_0x00000038 | 005226b3 (slt a3, tp, t0)", "PC_0x0000003c | 0042a6b3 (slt a3, t0, tp)", "PC_0x00000040 | 004236b3 (sltu a3, tp, tp)", "PC_0x00000044 | 005236b3 (sltu a3, tp, t0)", "PC_0x00000048 | 0042b6b3 (sltu a3, t0, tp)", "PC_0x0000004c | 00000000 (N/A_ASM)", "PC_0x00000050 | 00000000 (N/A_ASM)", "PC_0x00000054 | 00000000 (N/A_ASM)", "PC_0x00000058 | 00000000 (N/A_ASM)", "PC_0x0000005c | 00000000 (N/A_ASM)"];
+    const registerData = [{"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000100", "x2": "0x00000101", "x3": "0x00001001", "x4": "0x11111111111", "x5": "0x00010000", "x6": "0x11111101111", "x7": "0x11111100110", "x8": "0x11111111111", "x9": "0x00000000", "x10": "0x1111110011000000", "x11": "0x00111111", "x12": "0x00111111", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}];
+    const numCycles = 24;
+    const colorMap = {"IF": "#ff9933", "ID": "#5cd65c", "EX": "#4b9aefd7", "MEM": "#cf66ffb9", "WB": "#ff2525c6"};
+    const vcd_actual_to_synthetic_pc_map = {"0": 0, "256": 4, "4096": 8, "4352": 12, "65536": 16, "65792": 20, "69632": 24, "69888": 28, "1048576": 32, "1048832": 36, "1052672": 40, "1052928": 44, "1114112": 48, "1114368": 52, "1118208": 56, "1118464": 60, "16777216": 64, "16777472": 68, "16781312": 72, "16781568": 76, "16842752": 80, "16843008": 84, "16846848": 88, "16847104": 92};
+    const regHighlightData = [{"id_rs1": null, "id_rs2": null, "wb_rd": null}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 1, "id_rs2": 2, "wb_rd": 1}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 2}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 3}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 4}, {"id_rs1": 6, "id_rs2": 3, "wb_rd": 5}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 6}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 7}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 8}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 9}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 10}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 11}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 12}, {"id_rs1": 5, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 13}, {"id_rs1": 5, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}];
+    const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
+    let currentCycle = 0, animationInterval = null, animationSpeed = 500, showArrows = true;
+    
+    const pipelineDisplay = document.getElementById('pipelineDisplay');
+    const registerTable = document.getElementById('registerTable');
+    const arrowSvg = document.getElementById('arrow-svg');
+    const cycleCounter = document.getElementById('cycleCounter');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const speedControl = document.getElementById('speedControl');
+    const speedValue = document.getElementById('speedValue');
+    const searchBox = document.getElementById('searchBox');
+
+    // --- MODIFICATION: Refactored to build the static grid once ---
+    function populateStaticGrid() {
+        const filterText = searchBox.value.toLowerCase();
+        // Pipeline Headers
+        ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(text => {
+            const header = document.createElement('div');
+            header.className = 'grid-header'; header.textContent = text;
+            pipelineDisplay.appendChild(header);
+        });
+        // Instruction Rows
+        instructionLabels.forEach((label, idx) => {
+            if (idx === 0) return;
+            const synthPc = idx * 4;
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'grid-cell instruction-label';
+            labelDiv.id = `instr-label-${synthPc}`;
+            labelDiv.textContent = label;
+            pipelineDisplay.appendChild(labelDiv);
+            for (let i = 0; i < 5; i++) {
+                const stageCell = document.createElement('div');
+                stageCell.className = 'grid-cell stage-cell';
+                stageCell.id = `stage-cell-${synthPc}-${i}`;
+                pipelineDisplay.appendChild(stageCell);
+            }
+        });
+        // Register Table
+
+        for (let i = 0; i < 32; i++) {
+            const nameCell = document.createElement('div');
+            nameCell.className = 'grid-cell register-name-cell';
+            nameCell.textContent = `x${i} (${abiNames[i]})`;
+            registerTable.appendChild(nameCell);
+
+            const valueCell = document.createElement('div');
+            valueCell.className = 'grid-cell register-value-cell';
+            valueCell.id = `reg-val-${i}`;
+            registerTable.appendChild(valueCell);
+
+            const readCell = document.createElement('div');
+            readCell.className = 'grid-cell';
+            readCell.id = `reg-read-${i}`;
+            registerTable.appendChild(readCell);
+
+            const writeCell = document.createElement('div');
+            writeCell.className = 'grid-cell';
+            writeCell.id = `reg-write-${i}`;
+            registerTable.appendChild(writeCell);
+        }
+    }
+
+    function updateDisplay() {
+        cycleCounter.textContent = `Cycle ${currentCycle} / ${numCycles - 1}`;
+        updatePipelineDisplay();
+        updateRegisterTable();
+        prevBtn.disabled = currentCycle === 0;
+        nextBtn.disabled = currentCycle === numCycles - 1;
+        // Use timeout to ensure DOM is updated before calculating arrow positions
+        setTimeout(updateArrows, 0);
+    }
+
+        function updatePipelineDisplay() {
+            // Clear only the dynamic content (stage cells and highlights)
+            document.querySelectorAll('.stage-cell').forEach(c => c.innerHTML = '');
+            document.querySelectorAll('.instruction-label').forEach(l => l.classList.remove('hazard-source-highlight'));
+            
+            Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+                const instrCycleData = cycleData[currentCycle];
+                if (instrCycleData) {
+                    //if (instrCycleData.is_hazard_source) {
+                    //    document.getElementById(`instr-label-${synthPc}`).classList.add('hazard-source-highlight');
+                    //}
+                    const stageIdx = {IF:0, ID:1, EX:2, MEM:3, WB:4}[instrCycleData.stage];
+                    const stageCell = document.getElementById(`stage-cell-${synthPc}-${stageIdx}`);
+                    if (!stageCell) return;
+                    
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'stage-content';
+                    contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
+                    contentDiv.innerHTML = instrCycleData.display_text;
+                    // Assign an ID for the arrow drawing logic
+                    contentDiv.id = `content-${synthPc}-${instrCycleData.stage}`;
+
+                    // Only show the blue "forwarding destination" highlight when arrows are visible
+                    if (instrCycleData.stage === "EX") {
+                        const hasForwarding = (instrCycleData.hazard_info.forwardA !== 0) || (instrCycleData.hazard_info.forwardB !== 0);
+                        if (showArrows && hasForwarding) {
+                            contentDiv.classList.add('forwarding-destination-highlight');
+                        }
+                    }
+
+                  //  if (instrCycleData.is_hazard_source) {
+                  //      contentDiv.classList.add('hazard-source-highlight');
+                  //  }
+                    
+                    const tooltipSpan = document.createElement('span');
+                    tooltipSpan.className = 'tooltip-text';
+                    tooltipSpan.textContent = instrCycleData.tooltip;
+                    contentDiv.appendChild(tooltipSpan);
+                    stageCell.appendChild(contentDiv);
+                }
+            });
+        }
+
+        function filterPipelineInstruction() {
+            const query = searchBox.value.toLowerCase().trim();
+            if (!query) return;
+
+
+            let matchFound = false;
+
+
+            instructionLabels.forEach((label, idx) => {
+            const synthPc = idx * 4;
+            const labelLower = label.toLowerCase();
+            const pcText = `0x${synthPc.toString(16).padStart(8, '0')}`;
+            const rowIds = [`instr-label-${synthPc}`];
+            for (let i = 0; i < 5; i++) {
+            rowIds.push(`stage-cell-${synthPc}-${i}`);
+            }
+
+
+            const match = labelLower.includes(query) || pcText.includes(query);
+            matchFound = matchFound || match;
+
+
+            rowIds.forEach(id => {
+            const elem = document.getElementById(id);
+            if (elem) {
+            elem.style.display = match ? '' : 'none';
+            }
+            });
+            });
+
+
+            if (!matchFound) {
+            alert("❌ No matching instruction or PC found.");
+            }
+            }
+
+
+            // 🟡 Add listener for Enter key
+            searchBox.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+            filterPipelineInstruction();
+            }
+            });
+
+
+            // 🟡 Add reset function (optional)
+            function resetPipelineFilter() {
+            instructionLabels.forEach((_, idx) => {
+            const synthPc = idx * 4;
+            const rowIds = [`instr-label-${synthPc}`];
+            for (let i = 0; i < 5; i++) {
+            rowIds.push(`stage-cell-${synthPc}-${i}`);
+            }
+            rowIds.forEach(id => {
+            const elem = document.getElementById(id);
+            if (elem) elem.style.display = '';
+            });
+            });
+            }
+
+    
+    function updateRegisterTable() {
+        const currentRegs = registerData[currentCycle] || {};
+        const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {};
+        const highlights = regHighlightData[currentCycle] || {};
+
+        for (let i = 0; i < 32; i++) {
+            const valCell = document.getElementById(`reg-val-${i}`);
+            const currentVal = currentRegs[`x${i}`] || '0x00000000';
+            const prevVal = prevRegs[`x${i}`] || '0x00000000';
+
+            // Show decimal as *binary* if hex digits are only 0/1; otherwise as hex
+            let displayValue = currentVal;
+            if (typeof currentVal === 'string' && currentVal.startsWith('0x')) {
+                const digits = currentVal.slice(2); // e.g. "00000100"
+                let dec = Number.NaN;
+
+                if (/^[01]+$/.test(digits)) {
+                    // treat as binary
+                    dec = parseInt(digits, 2);
+                } else if (/^[0-9a-fA-F]+$/.test(digits)) {
+                    // treat as hex
+                    dec = parseInt(digits, 16);
+                }
+
+                if (!Number.isNaN(dec)) {
+                    displayValue = `${currentVal} (${dec})`;
+                }
+            }
+
+            valCell.textContent = displayValue;
+            const readCell = document.getElementById(`reg-read-${i}`);
+            const writeCell = document.getElementById(`reg-write-${i}`);
+            readCell.textContent = '';
+            writeCell.textContent = '';
+
+            if (highlights.id_rs1 === i || highlights.id_rs2 === i) {
+                readCell.innerHTML = '<span style="color: #007BFF;font-size: 20px;">●</span>';
+            }
+            if (i !== 0 && highlights.wb_rd === i) {
+                writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+            }
+
+            // highlight if value changed
+            valCell.classList.toggle('changed', currentVal !== prevVal);
+        }
+    }
+
+    
+    // --- NEW: Function to draw a single arrow ---
+    function drawArrow(fromElem, toElem) {
+        if (!fromElem || !toElem) return;
+        const svgRect = arrowSvg.getBoundingClientRect();
+        const fromRect = fromElem.getBoundingClientRect();
+        const toRect = toElem.getBoundingClientRect();
+
+        const startX = fromRect.left + fromRect.width / 2 - svgRect.left;
+        const startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+        const endX = toRect.left + toRect.width / 2 - svgRect.left;
+        const endY = toRect.top - svgRect.top; // Point to the TOP of the cell
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        // A bezier curve for a nice arc
+        const d = `M ${startX},${startY} C ${startX},${startY - 40} ${endX},${endY - 40} ${endX},${endY}`;
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'arrow');
+        arrowSvg.appendChild(path);
+    }
+
+    // --- NEW: Function to update all arrows for the current cycle ---
+    function updateArrows() {
+        if (!showArrows) {
+            arrowSvg.innerHTML = ''; // clear any existing arrows when hidden
+            return;
+        }
+        arrowSvg.innerHTML = '<defs><marker id="arrowhead" markerWidth="5" markerHeight="3.5" refX="0" refY="1.75" orient="auto"><polygon points="0 0, 5 1.75, 0 3.5" fill="#FF4500" /></marker></defs>';
+        
+        Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+            const instrCycleData = cycleData[currentCycle];
+            if (instrCycleData && instrCycleData.stage === 'EX') {
+                const hazardInfo = instrCycleData.hazard_info;
+                const toElem = document.getElementById(`content-${synthPc}-EX`);
+
+                if (hazardInfo.source_pc_mem !== null) {
+                    const fromElem = document.getElementById(`content-${hazardInfo.source_pc_mem}-MEM`);
+                    drawArrow(fromElem, toElem);
+                }
+                if (hazardInfo.source_pc_wb !== null) {
+                    const fromElem = document.getElementById(`content-${hazardInfo.source_pc_wb}-WB`);
+                    drawArrow(fromElem, toElem);
+                }
+            }
+        });
+    }
+
+
+    function nextCycle() { if (currentCycle < numCycles - 1) { currentCycle++; updateDisplay(); } else { stopAnimation(); } }
+    function prevCycle() { if (currentCycle > 0) { currentCycle--; updateDisplay(); } }
+    function startAnimation() {
+        if (animationInterval) return;
+        playPauseBtn.textContent = 'Pause';
+        animationInterval = setInterval(nextCycle, animationSpeed);
+    }
+    function stopAnimation() {
+        clearInterval(animationInterval);
+        animationInterval = null;
+        playPauseBtn.textContent = 'Play';
+    }
+    function restartAnimation() { stopAnimation(); currentCycle = 0; updateDisplay(); }
+
+    prevBtn.addEventListener('click', prevCycle);
+    nextBtn.addEventListener('click', nextCycle);
+    restartBtn.addEventListener('click', restartAnimation);
+    playPauseBtn.addEventListener('click', () => animationInterval ? stopAnimation() : startAnimation());
+    searchBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+    filterPipelineInstruction();
+    }
+    });
+    speedControl.addEventListener('input', () => {
+        animationSpeed = speedControl.value;
+        speedValue.textContent = `${animationSpeed}ms`;
+        if (animationInterval) { stopAnimation(); startAnimation(); }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') nextCycle();
+        if (e.key === 'ArrowLeft') prevCycle();
+    });
+    document.getElementById('toggleArrowsBtn').addEventListener('click', () => {
+        showArrows = !showArrows;
+        document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Forwaring' : 'Show Forwaring';
+        updateDisplay(); // re-render (clears or draws arrows accordingly)
+    });
+
+    // Initial setup
+    populateStaticGrid();
+    updateDisplay();
+</script>
+</body>
+</html>
