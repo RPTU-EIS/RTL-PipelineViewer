@@ -371,14 +371,26 @@ print(f"Cycle {cycle_idx}: rs1={rs1}, rs2={rs2}, rd={rd}")
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
 
 instruction_labels_for_js = []
+filtered_synth_pc_to_actual_pc = {}  # Map only real instructions
+
 sorted_synth_pcs = sorted(vcd_actual_to_synthetic_pc_map.values())
 for synth_pc in sorted_synth_pcs:
     actual_pc = next((apc for apc, spc in vcd_actual_to_synthetic_pc_map.items() if spc == synth_pc), None)
-    if actual_pc is not None:
-        hex_display = actual_pc_to_instr_hex_display.get(actual_pc, "N/A_HEX")
-        asm_display = actual_pc_to_disassembled_instr.get(actual_pc, {}).get("asm", "N/A_ASM")
-        asm_display = 'nop' if asm_display == 'addi zero, zero, 0' else asm_display
-        instruction_labels_for_js.append(f"PC_0x{synth_pc:08x} | {hex_display} ({asm_display})")
+    if actual_pc is None:
+        continue
+
+    hex_display = actual_pc_to_instr_hex_display.get(actual_pc, "N/A_HEX")
+    asm_display = actual_pc_to_disassembled_instr.get(actual_pc, {}).get("asm", "N/A_ASM")
+
+    #  Skip empty/invalid instructions
+    if asm_display == "N/A_ASM" or hex_display in ["00000000", "N/A_HEX"]:
+        continue
+
+    # Replace nop for visual simplicity
+    asm_display = "nop" if asm_display == "addi zero, zero, 0" else asm_display
+    instruction_labels_for_js.append(f"PC_0x{synth_pc:08x} | {hex_display} ({asm_display})")
+    filtered_synth_pc_to_actual_pc[synth_pc] = actual_pc  # Track valid instructions only
+
 
 # --- HTML Generation ---
 color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
@@ -428,7 +440,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 .register-name-cell {{ font-family: monospace; text-align: left !important; padding-left: 10px !important; }}
 .register-value-cell {{ font-family: monospace; }}
 .register-value-cell.changed {{ background-color: #FFD700; transition: background-color 0.1s ease-in; }}
-.hazard-source-highlight {{ border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7); }}
+.hazard-source-highlight {{ border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7);background-color: #ffe5e5; }}
 .forwarding-destination-highlight {{ border: 3px solid #007BFF !important; box-shadow: 0 0 10px rgba(0, 123, 255, 0.7); background-color: #cce5ff !important; }}
 .highlighted-search {{
     background-color: yellow !important;
@@ -449,39 +461,41 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="playPauseBtn">Play</button>
     
     <button id="restartBtn">Restart</button>
-    <button id="toggleArrowsBtn">Hide Forwaring</button>    
+    <button id="toggleArrowsBtn">Hide Forwaring</button>  
+    <button id="toggleHazardsBtn">Show Hazards</button>  
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
         <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
         <span id="speedValue">500ms</span>
-    </div>
-    <input type="text" id="searchBox" placeholder="Search PC or instruction...">
-    <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
-
-</div>
-
-<div class="legend">
-    <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
-    <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
-</div>
-
-<div class="content-wrapper">
-    <div class="pipeline-container">
-        <h3>Pipeline Stages</h3>
-        <div style="position: relative;">
-            <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
-            <svg id="arrow-svg"></svg>
         </div>
-    </div>
-    <div class="register-container">
-        <h3>Register File State</h3>
-        <div id="registerTable" class="register-grid">
-            <div class="grid-header">Register</div>
-            <div class="grid-header">Value</div>
-            <div class="grid-header">Read (ID)</div>
-            <div class="grid-header">Write (WB)</div>
+        
+
+         </div>
+
+        <div class="legend">
+            <input type="text" id="searchBox" placeholder="Search PC, instruction or register ">
+            <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
+            <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
+            <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
+         </div>
+
+    <div class="content-wrapper">
+        <div class="pipeline-container">
+            <h3>Pipeline Stages</h3>
+            <div style="position: relative;">
+                <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
+                <svg id="arrow-svg"></svg>
+            </div>
         </div>
-    </div>
+        <div class="register-container">
+            <h3>Register File State</h3>
+            <div id="registerTable" class="register-grid">
+                <div class="grid-header">Register</div>
+                <div class="grid-header">Value</div>
+                <div class="grid-header">Read (EX)</div>
+                <div class="grid-header">Write (WB)</div>
+            </div>
+        </div>
 </div>
 
 
@@ -495,7 +509,8 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     const regHighlightData = {reg_highlight_data_js};
     const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
     let currentCycle = 0, animationInterval = null, animationSpeed = 500, showArrows = true;
-    
+    let showHazards = false;
+
     const pipelineDisplay = document.getElementById('pipelineDisplay');
     const registerTable = document.getElementById('registerTable');
     const arrowSvg = document.getElementById('arrow-svg');
@@ -576,9 +591,9 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {{
                 const instrCycleData = cycleData[currentCycle];
                 if (instrCycleData) {{
-                    //if (instrCycleData.is_hazard_source) {{
-                    //    document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
-                    //}}
+                    if (showHazards && instrCycleData.is_hazard_source) {{
+                        document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
+                    }}
                     const stageIdx = {{IF:0, ID:1, EX:2, MEM:3, WB:4}}[instrCycleData.stage];
                     const stageCell = document.getElementById(`stage-cell-${{synthPc}}-${{stageIdx}}`);
                     if (!stageCell) return;
@@ -598,9 +613,9 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                         }}
                     }}
 
-                  //  if (instrCycleData.is_hazard_source) {{
-                  //      contentDiv.classList.add('hazard-source-highlight');
-                  //  }}
+                    if (showHazards && instrCycleData.is_hazard_source) {{
+                        document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
+                    }}
                     
                     const tooltipSpan = document.createElement('span');
                     tooltipSpan.className = 'tooltip-text';
@@ -685,14 +700,12 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             // Show decimal as *binary* if hex digits are only 0/1; otherwise as hex
             let displayValue = currentVal;
             if (typeof currentVal === 'string' && currentVal.startsWith('0x')) {{
-                const digits = currentVal.slice(2); // e.g. "00000100"
+                const digits = currentVal.slice(2);
                 let dec = Number.NaN;
 
                 if (/^[01]+$/.test(digits)) {{
-                    // treat as binary
                     dec = parseInt(digits, 2);
                 }} else if (/^[0-9a-fA-F]+$/.test(digits)) {{
-                    // treat as hex
                     dec = parseInt(digits, 16);
                 }}
 
@@ -707,14 +720,16 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             readCell.textContent = '';
             writeCell.textContent = '';
 
-            if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
-                readCell.innerHTML = '<span style="color: #007BFF;font-size: 20px;">●</span>';
-            }}
-            if (i !== 0 && highlights.wb_rd === i) {{
-                writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+            // ✅ Only show dots from cycle 3 onward
+            if (currentCycle >= 3) {{
+                if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
+                    readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
+                }}
+                if (i !== 0 && highlights.wb_rd === i) {{
+                    writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+                }}
             }}
 
-            // highlight if value changed
             valCell.classList.toggle('changed', currentVal !== prevVal);
         }}
     }}
@@ -803,6 +818,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         showArrows = !showArrows;
         document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Forwaring' : 'Show Forwaring';
         updateDisplay(); // re-render (clears or draws arrows accordingly)
+    }});
+    document.getElementById('toggleHazardsBtn').addEventListener('click', () => {{
+        showHazards = !showHazards;
+        document.getElementById('toggleHazardsBtn').textContent = showHazards ? 'Hide Hazards' : 'Show Hazards';
+        updateDisplay(); // re-render pipeline with or without hazard highlights
     }});
 
     // Initial setup
