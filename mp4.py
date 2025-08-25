@@ -56,8 +56,18 @@ hazard_signals = {
     "forwardB": "HazardDetectionRV32I.core.FU.io_forwardB",
 }
 
-# --- Signals for Register File ---
 register_signals = {f"x{i}": f"HazardDetectionRV32I.core.regFile.regFile_{i}" for i in range(32)}
+
+def check_all_signals_flat(*signal_dicts):
+    print("🔎 Checking individual signals in VCD:")
+    seen = set()
+    for signal_dict in signal_dicts:
+        for key, signal_path in signal_dict.items():
+            if signal_path not in seen:  # avoid duplicates
+                seen.add(signal_path)
+                exists = signal_path in vcd.signals
+                symbol = "✅" if exists else "⚠️"
+                print(f"{symbol} {key} signal {'detected' if exists else 'not found'} in VCD")
 
 output_html = "pipeline_animation.html" # Output filename for the animation HTML
 
@@ -88,7 +98,9 @@ for t, val in sorted(clock_tv, key=lambda x: x[0]):
 num_cycles = len(rising_edges)
 print(f"Detected {num_cycles} clock cycles.")
 
-# Helper to extract signal values at each rising edge
+
+
+
 def extract_signal_at_cycles(signal_name, default_val=None, base=10):
     if signal_name not in vcd.signals:
         print(f"⚠️ Signal {signal_name} not found in VCD. Using default value {default_val}.")
@@ -117,40 +129,62 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
             values.append(default_val)
     return values
 
+
+
 instr_vals = extract_signal_at_cycles("HazardDetectionRV32I.core.IDBarrier.instReg", default_val=0, base=2)
+
+
+
+def safe_extract_signal(signal_dict, signal_name, default_val=0, base=2):
+    if signal_name not in signal_dict:
+        print(f"⚠️ Signal '{signal_name}' not found in VCD. Using default.")
+        return [default_val] * num_cycles
+    return extract_signal_at_cycles(signal_dict[signal_name], default_val, base)
+
+
+
+# Helper to extract signal values at each rising edge
+def extract_signals_group(signal_dict, default_val, base, store_to, postprocess_fn=None):
+    for key, signal_name in signal_dict.items():
+        values = extract_signal_at_cycles(signal_name, default_val=default_val, base=base)
+        for cycle_idx, val in enumerate(values):
+            if postprocess_fn:
+                val = postprocess_fn(val)
+            store_to[cycle_idx][key] = val
+
+
+
+check_all_signals_flat(
+    stage_signals,
+    ex_signals,
+    wb_signals,
+    hazard_signals,
+    register_signals,
+   
+    { "instr": "HazardDetectionRV32I.core.IDBarrier.instReg" }
+)
 
 
 
 # --- Extract Signal Data ---
 ex_values_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(ex_signals, default_val=None, base=2, store_to=ex_values_by_cycle)
+
 wb_values_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(wb_signals, default_val=None, base=2, store_to=wb_values_by_cycle)
+
 hazard_data_raw_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(hazard_signals, default_val=0, base=2, store_to=hazard_data_raw_by_cycle)
+
+def postprocess_register(val):
+    return f"0x{val:08x}" if isinstance(val, int) else '0x00000000'
+
 register_values_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(register_signals, default_val=0, base=16, store_to=register_values_by_cycle, postprocess_fn=postprocess_register)
 
-for key, signal_name in ex_signals.items():
-    vals = extract_signal_at_cycles(signal_name, default_val=None, base=2) 
-    for cycle_idx, val in enumerate(vals):
-        ex_values_by_cycle[cycle_idx][key] = val
+print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
 
-for key, signal_name in wb_signals.items():
-    vals = extract_signal_at_cycles(signal_name, default_val=None, base=2)
-    for cycle_idx, val in enumerate(vals):
-        wb_values_by_cycle[cycle_idx][key] = val
 
-for key, signal_name in hazard_signals.items():
-    vals = extract_signal_at_cycles(signal_name, default_val=0, base=2)
-    for cycle_idx, val in enumerate(vals):
-        hazard_data_raw_by_cycle[cycle_idx][key] = val
-
-print("Extracting register values for each cycle...")
-for reg_name, signal_name in register_signals.items():
-    vals = extract_signal_at_cycles(signal_name, default_val=0, base=16)
-    for cycle_idx, val in enumerate(vals):
-        if isinstance(val, int):
-            register_values_by_cycle[cycle_idx][reg_name] = f"0x{val:08x}"
-        else:
-            register_values_by_cycle[cycle_idx][reg_name] = '0x00000000'
-print("✅ Register data extracted.")
 
 # --- Apply Delays for Correct Cycle Synchronization ---
 delayed_instr_vals = [None] + instr_vals[:-1]
@@ -172,7 +206,7 @@ for i in range(1, num_cycles):
     delayed_register_values_by_cycle[i] = register_values_by_cycle[i-1]
 if num_cycles > 0:
     delayed_register_values_by_cycle[0] = {f"x{i}": "0x00000000" for i in range(32)}
-print("✅ Applied one-cycle delay to register file data.")
+
 
 def convert_hex_immediates_to_decimal(disasm: str) -> str:
     def replace_hex(match):
@@ -203,14 +237,14 @@ for i in range(num_cycles):
 
     rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
 
-    print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
+    #print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
 
     reg_highlight_data_by_cycle.append({
         "id_rs1": rs1,
         "id_rs2": rs2_final,
         "wb_rd": rd
     })
-    print(f"Cycle {i}: full_instr={hex(full_instr) if opcode is not None else 'None'}, opcode={opcode}")
+   
 
 
 
@@ -365,7 +399,7 @@ for cycle_idx in range(num_cycles):
                 "stage": stage, "tooltip": tooltip, "display_text": display,
                 "hazard_info": hazard_info, "is_hazard_source": is_source
             }
-print(f"Cycle {cycle_idx}: rs1={rs1}, rs2={rs2}, rd={rd}")
+# print(f"Cycle {cycle_idx}: rs1={rs1}, rs2={rs2}, rd={rd}")
 
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
