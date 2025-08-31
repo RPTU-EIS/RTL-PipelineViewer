@@ -13,7 +13,7 @@ md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
 md.detail = True
 
 # --- Configuration ---
-VCD_FILE = "dump.vcd" # Your VCD file
+VCD_FILE = "dump4.vcd" # Your VCD file
 CLOCK_SIGNAL = None 
 
 # --- Load VCD ---
@@ -24,7 +24,7 @@ except FileNotFoundError:
     print(f"❌ Error: VCD file '{VCD_FILE}' not found. Please ensure it's in the same directory.")
     exit()
 
-print("✅ First: Check if the signals match. Second: list of detected signals in VCD file\n")
+print(f"\nFirst: Resolve signal names (with priority fallbacks). Then: list all detected signals in the {VCD_FILE} (VCD file).\n")
 
 
 
@@ -37,16 +37,20 @@ def resolve_signal(signal_names, vcd):
             return name
     return None
 
-def resolve_signals_with_log(signal_dict, vcd, label=""):
+def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)"):
     resolved = {}
     print(f"\n🔎 Looking for {label} signals:")
+    found, missing = 0, 0
     for key, candidates in signal_dict.items():
         selected = resolve_signal(candidates, vcd)
         resolved[key] = selected
         if selected:
             print(f"✅ {key} → {selected}")
+            found += 1
         else:
-            print(f"⚠️ {key} not found in VCD")
+            print(f"⚠️ {key} not found in VCD file: {vcd_filename}")
+            missing += 1
+    print(f"🧾 {label} summary: {found} found, {missing} missing\n")
     return resolved
 
 
@@ -54,71 +58,71 @@ def resolve_signals_with_log(signal_dict, vcd, label=""):
 stage_signals_raw = {
     "IF": [
         "HazardDetectionRV32I.core.IFBarrier.io_pc_out",
-        "PipelinedRV32I.core.IFBarrier.io_pc_out"
+        "PipelinedRV32I.core.ifBarrier.io_pc_out"
     ],
     "ID": [
         "HazardDetectionRV32I.core.IDBarrier.pcReg",
-        "PipelinedRV32I.core.IDBarrier.pcReg"
+        "PipelinedRV32I.core.idBarrier.pcReg"
     ],
     "EX": [
         "HazardDetectionRV32I.core.EXBarrier.pcReg",
-        "PipelinedRV32I.core.EXBarrier.pcReg"
+        "PipelinedRV32I.core.exBarrier.pcReg"
     ],
     "MEM": [
         "HazardDetectionRV32I.core.MEMBarrier.pcReg",
-        "PipelinedRV32I.core.MEMBarrier.pcReg"
+        "PipelinedRV32I.core.memBarrier.pcReg"
     ],
     "WB": [
         "HazardDetectionRV32I.core.WBBarrier.pcReg",
-        "PipelinedRV32I.core.WBBarrier.pcReg"
+        "PipelinedRV32I.core.wbBarrier.pcReg"
     ]
 }
 
-stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage")
+stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage", vcd_filename=VCD_FILE)
 
 instruction_signals_raw = {
     "IF": [
         "HazardDetectionRV32I.core.IFBarrier.io_inst_out",
-        "PipelinedRV32I.core.IFBarrier.io_inst_out"
+        "PipelinedRV32I.core.ifBarrier.io_inst_out"
     ],
     "ID": [
         "HazardDetectionRV32I.core.IDBarrier.instReg",
-        "PipelinedRV32I.core.IDBarrier.instReg"
+        "PipelinedRV32I.core.idBarrier.instReg"
     ],
     "EX": [
         "HazardDetectionRV32I.core.EXBarrier.instReg",
-        "PipelinedRV32I.core.EXBarrier.instReg"
+        "PipelinedRV32I.core.exBarrier.instReg"
     ],
     "MEM": [
         "HazardDetectionRV32I.core.MEMBarrier.instReg",
-        "PipelinedRV32I.core.MEMBarrier.instReg"
+        "PipelinedRV32I.core.memBarrier.instReg"
     ],
     "WB": [
         "HazardDetectionRV32I.core.WBBarrier.instReg",
-        "PipelinedRV32I.core.WBBarrier.instReg"
+        "PipelinedRV32I.core.wbBarrier.instReg"
     ]
 }
-instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction")
+instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction", vcd_filename=VCD_FILE)
 
 ex_signals_raw = {
     "operandA": [
         "HazardDetectionRV32I.core.EX.io_operandA",
-        "PipelinedRV32I.core.EX.io_operandA"
+        "PipelinedRV32I.core.exStage.io_data1_in"
     ],
     "operandB": [
         "HazardDetectionRV32I.core.EX.io_operandB",
-        "PipelinedRV32I.core.EX.io_operandB"
+        "PipelinedRV32I.core.exStage.operandB"
     ],
     "aluResult": [
         "HazardDetectionRV32I.core.EX.io_aluResult",
-        "PipelinedRV32I.core.EX.io_aluResult"
+        "PipelinedRV32I.core.exStage.aluResult"
     ],
     "UOP": [
         "HazardDetectionRV32I.core.EX.io_uop",
-        "PipelinedRV32I.core.EX.io_uop"
+        "PipelinedRV32I.core.exStage.io_upo_in"
     ]
 }
-ex_signals = resolve_signals_with_log(ex_signals_raw, vcd, "EX")
+ex_signals = resolve_signals_with_log(ex_signals_raw, vcd, "EX", vcd_filename=VCD_FILE)
 
 wb_signals_raw = {
     "rd": [
@@ -127,26 +131,46 @@ wb_signals_raw = {
     ],
     "wb_data": [
         "HazardDetectionRV32I.core.WB.io_check_res",
-        "PipelinedRV32I.core.WB.io_check_res"
+        "PipelinedRV32I.core.io_check_res"
     ]
 }
-wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB")
+wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VCD_FILE)
 
 # --- Signals for Hazard Detection and Forwarding Unit ---
-hazard_signals = {
-    # Register addresses for operands in ID/EX stage
-    "rs1_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
-    "rs2_addr": "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
-    "opcode":   "HazardDetectionRV32I.core.ID.opcode",
-
-    # Destination register addresses from MEM and WB stages
-    "rd_mem_addr": "HazardDetectionRV32I.core.EXBarrier.io_outRD",
-    "rd_wb_addr": "HazardDetectionRV32I.core.MEMBarrier.io_outRD",
-
-    # Forwarding unit outputs
-    "forwardA": "HazardDetectionRV32I.core.FU.io_forwardA",
-    "forwardB": "HazardDetectionRV32I.core.FU.io_forwardB",
+hazard_signal_candidates = {
+    "rs1_addr": [
+        "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
+        "PipelinedRV32I.core.IDBarrier.io_outRS1"
+    ],
+    "rs2_addr": [
+        "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
+        "PipelinedRV32I.core.IDBarrier.io_outRS2"
+    ],
+    "opcode": [
+        "HazardDetectionRV32I.core.ID.opcode",
+        "PipelinedRV32I.core.idStage.opcode"
+    ],
+    "rd_mem_addr": [
+        "HazardDetectionRV32I.core.EXBarrier.io_outRD",
+        "PipelinedRV32I.core.EXBarrier.io_outRD"
+    ],
+    "rd_wb_addr": [
+        "HazardDetectionRV32I.core.MEMBarrier.io_outRD",
+        "PipelinedRV32I.core.MEMBarrier.io_outRD"
+    ],
+    "forwardA": [
+        "HazardDetectionRV32I.core.FU.io_forwardA",
+        "PipelinedRV32I.core.FU.io_forwardA"
+    ],
+    "forwardB": [
+        "HazardDetectionRV32I.core.FU.io_forwardB",
+        "PipelinedRV32I.core.FU.io_forwardB"
+    ]
 }
+
+
+hazard_signals = resolve_signals_with_log(hazard_signal_candidates, vcd, label="Hazard", vcd_filename=VCD_FILE)
+
 
 register_signals_raw = {
     f"x{i}": [
@@ -156,23 +180,7 @@ register_signals_raw = {
     for i in range(32)
 }
 
-register_signals = resolve_signals_with_log(register_signals_raw, vcd, "Register")
-
-print("✅ List of available signals in VCD:\n")
-for signal in vcd.signals:
-    print(signal)
-
-def check_all_signals_flat(*signal_dicts):
-    print("🔎 Checking individual signals in VCD:")
-    seen = set()
-    for signal_dict in signal_dicts:
-        for key, signal_path in signal_dict.items():
-            if signal_path not in seen:  # avoid duplicates
-                seen.add(signal_path)
-                exists = signal_path in vcd.signals
-                symbol = "✅" if exists else "⚠️"
-                print(f"{symbol} {key} signal {'detected' if exists else 'not found'} in VCD")
-
+register_signals = resolve_signals_with_log(register_signals_raw, vcd, "Register", vcd_filename=VCD_FILE)
 
 
 output_html = "pipeline_animation.html" # Output filename for the animation HTML
@@ -203,7 +211,7 @@ print(f"Detected {num_cycles} clock cycles.")
 
 def extract_signal_at_cycles(signal_name, default_val=None, base=10):
     if signal_name not in vcd.signals:
-        print(f"⚠️ Signal {signal_name} not found in VCD. Using default value {default_val}.")
+        #print(f"⚠️ Signal {signal_name} not found in VCD. Using default value {default_val}.")
         return [default_val] * num_cycles
     
     tv_sorted = sorted(vcd[signal_name].tv, key=lambda x: x[0])
@@ -254,15 +262,10 @@ def extract_signals_group(signal_dict, default_val, base, store_to, postprocess_
 
 
 
-check_all_signals_flat(
-    stage_signals,
-    ex_signals,
-    wb_signals,
-    hazard_signals,
-    register_signals,
-   
-    { "instr": "HazardDetectionRV32I.core.IDBarrier.instReg" }
-)
+print(f"\n✅ List of available signals in VCD: {VCD_FILE}\n")
+for signal in vcd.signals:
+    print(signal)
+
 
 
 
@@ -282,7 +285,7 @@ def postprocess_register(val):
 register_values_by_cycle = [{} for _ in range(num_cycles)]
 extract_signals_group(register_signals, default_val=0, base=16, store_to=register_values_by_cycle, postprocess_fn=postprocess_register)
 
-print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
+#print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
 
 
 
