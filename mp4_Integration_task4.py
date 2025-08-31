@@ -140,11 +140,13 @@ wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VC
 hazard_signal_candidates = {
     "rs1_addr": [
         "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
-        "PipelinedRV32I.core.IDBarrier.io_outRS1"
+        "PipelinedRV32I.core.IDBarrier.io_outRS1",
+        "PipelinedRV32I.core.idBarrier.rs1"
     ],
     "rs2_addr": [
         "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
-        "PipelinedRV32I.core.IDBarrier.io_outRS2"
+        "PipelinedRV32I.core.IDBarrier.io_outRS2",
+        "PipelinedRV32I.core.idBarrier.rs2"
     ],
     "opcode": [
         "HazardDetectionRV32I.core.ID.opcode",
@@ -226,14 +228,20 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
         if last_val is not None and 'x' not in last_val.lower():
             try:
                 if last_val.startswith('b'):
-                    values.append(int(last_val[1:], 2))
+                    val = int(last_val[1:], 2)
                 elif last_val.startswith('h'):
-                    values.append(int(last_val[1:], 16))
+                    val = int(last_val[1:], 16)
+                elif all(c in '01' for c in last_val):  # <-- NEW: plain binary string
+                    val = int(last_val, 2)
                 else:
-                    values.append(int(last_val, base))
-            except (ValueError, TypeError):
+                    val = int(last_val, base)
+
+                values.append(val)
+            except (ValueError, TypeError) as e:
+                print(f"⚠️ Failed to parse value '{last_val}' for signal '{signal_name}' at cycle {rise_time}: {e}")
                 values.append(default_val)
         else:
+            print(f"⚠️ Skipping unknown or uninitialized value '{last_val}' for '{signal_name}' at cycle {rise_time}")
             values.append(default_val)
     return values
 
@@ -333,14 +341,29 @@ for i in range(num_cycles):
 
     # Decode instruction → extract opcode
     try:
-        full_instr = int(delayed_instr_vals[i], 16) if isinstance(delayed_instr_vals[i], str) else int(delayed_instr_vals[i])
-        opcode = full_instr & 0x7F  # This correctly extracts the 7-bit opcode
+        raw_opcode = delayed_hazard_data_by_cycle[i].get("opcode")
+        if isinstance(raw_opcode, str) and all(c in "01" for c in raw_opcode):
+            opcode = int(raw_opcode, 2)
+        elif isinstance(raw_opcode, int):
+            opcode = raw_opcode
+        else:
+            opcode = int(str(raw_opcode), 10)  # fallback
     except (ValueError, TypeError):
         opcode = None
+    
+    print(f"Cycle {i}: raw_opcode={raw_opcode}, parsed_opcode={opcode}")
+
 
     rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
 
-    #print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
+    if i == 0:
+        print(f"Raw transitions for rs2_addr:")
+        print(vcd[hazard_signals['rs2_addr']].tv[:10])  # show first 10 changes
+
+        print(f"Raw transitions for opcode:")
+        print(vcd[hazard_signals['opcode']].tv[:10])
+
+    print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
 
     reg_highlight_data_by_cycle.append({
         "id_rs1": rs1,
@@ -419,6 +442,7 @@ for actual_pc in all_pcs_from_vcd:
 # --- Prepare Data for HTML/JS ---
 pipeline_data_for_js = defaultdict(lambda: [None] * num_cycles)
 for cycle_idx in range(num_cycles):
+    
     current_hazard_data = delayed_hazard_data_by_cycle[cycle_idx]
     forwardA = current_hazard_data.get("forwardA", 0)
     forwardB = current_hazard_data.get("forwardB", 0)
@@ -502,7 +526,8 @@ for cycle_idx in range(num_cycles):
                 "stage": stage, "tooltip": tooltip, "display_text": display,
                 "hazard_info": hazard_info, "is_hazard_source": is_source
             }
-# print(f"Cycle {cycle_idx}: rs1={rs1}, rs2={rs2}, rd={rd}")
+
+
 
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
@@ -543,7 +568,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 .content-wrapper {{ display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }}
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
 .pipeline-grid {{ grid-template-columns: 390px repeat(5, 120px); }}
-.register-grid {{ grid-template-columns: 120px 190px 95px 95px;}}
+.register-grid {{ grid-template-columns: 120px 210px 95px 95px;}}
 .grid-cell span {{    font-size: 16px; font-weight: bold;}}
 //.grid-cell.stage-cell {{
     font-size: 30px;
