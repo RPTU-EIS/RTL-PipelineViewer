@@ -13,8 +13,16 @@ md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
 md.detail = True
 
 # --- Configuration ---
-VCD_FILE = "dump4.vcd" # Your VCD file
+# VCD_FILE = "dump5.vcd" # Your VCD file
 CLOCK_SIGNAL = None 
+
+while True:
+    VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
+    if os.path.exists(VCD_FILE):
+        print(f"✅ Found VCD file: {VCD_FILE}")
+        break
+    else:
+        print(f"❌ File '{VCD_FILE}' not found. Please try again.\n")
 
 # --- Load VCD ---
 print(f"Loading VCD file: {VCD_FILE}")
@@ -41,6 +49,8 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
     resolved = {}
     print(f"\n🔎 Looking for {label} signals:")
     found, missing = 0, 0
+    all_vcd_signals = list(vcd.signals)  # Get all signal names
+
     for key, candidates in signal_dict.items():
         selected = resolve_signal(candidates, vcd)
         resolved[key] = selected
@@ -49,9 +59,24 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
             found += 1
         else:
             print(f"⚠️ {key} not found in VCD file: {vcd_filename}")
+            # Substring-based suggestions (case-insensitive)
+            suggestions = [
+                sig for sig in all_vcd_signals
+                if key.lower() in sig.lower()
+            ]
+
+            if suggestions:
+                print(f"   🔍 Possible signals found in VCD that resemble '{key}':")
+                for s in suggestions[:5]:  # Limit to 5 suggestions
+                    print(f"       • {s}")
+            else:
+                print(f"   ℹ️ No similar signals found for '{key}' in VCD.")
+
             missing += 1
+
     print(f"🧾 {label} summary: {found} found, {missing} missing\n")
     return resolved
+
 
 
 
