@@ -11,6 +11,7 @@ import webbrowser
 # Initialize Capstone for RISC-V 32-bit disassembly
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
 md.detail = True
+missing_signals_by_label = {}
 
 # --- Configuration ---
 # VCD_FILE = "dump5.vcd" # Your VCD file
@@ -75,6 +76,11 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
             missing += 1
 
     print(f"🧾 {label} summary: {found} found, {missing} missing\n")
+    if label not in missing_signals_by_label:
+        missing_signals_by_label[label] = []
+    for key, selected in resolved.items():
+        if not selected:
+            missing_signals_by_label[label].append(key)
     return resolved
 
 
@@ -376,19 +382,19 @@ for i in range(num_cycles):
     except (ValueError, TypeError):
         opcode = None
     
-    print(f"Cycle {i}: raw_opcode={raw_opcode}, parsed_opcode={opcode}")
+   # print(f"Cycle {i}: raw_opcode={raw_opcode}, parsed_opcode={opcode}")
 
 
     rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
 
-    if i == 0:
-        print(f"Raw transitions for rs2_addr:")
-        print(vcd[hazard_signals['rs2_addr']].tv[:10])  # show first 10 changes
+    #if i == 0:
+        #print(f"Raw transitions for rs2_addr:")
+       # print(vcd[hazard_signals['rs2_addr']].tv[:10])  # show first 10 changes
 
-        print(f"Raw transitions for opcode:")
-        print(vcd[hazard_signals['opcode']].tv[:10])
+       # print(f"Raw transitions for opcode:")
+       # print(vcd[hazard_signals['opcode']].tv[:10])
 
-    print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
+    #print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
 
     reg_highlight_data_by_cycle.append({
         "id_rs1": rs1,
@@ -579,13 +585,59 @@ for synth_pc in sorted_synth_pcs:
     filtered_synth_pc_to_actual_pc[synth_pc] = actual_pc  # Track valid instructions only
 
 
+
+
+
+# --- NEW: Build a styled warning box for missing signals ---
+missing_signals_html = ""
+all_missing_keys = [key for keys in missing_signals_by_label.values() for key in keys]
+
+if all_missing_keys:
+    # Use an f-string to build the main box structure
+    missing_signals_html = """
+    <div id="missing-signals-container" class="missing-signals-box">
+        <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
+        <div class="missing-signals-header">
+            <span style="font-size: 20px; margin-right: 10px;">⚠️</span>
+            <strong>Missing Signals Detected</strong>
+        </div>
+        <p>The animation may not work as expected because the following signals were not found in your VCD file. Please check the signal names in your hardware design.</p>
+        <div class="missing-signals-list">
+    """
+    
+    # Add a list for each category
+    for category, keys in missing_signals_by_label.items():
+        if not keys:
+            continue
+        # Start the new wrapper div
+        missing_signals_html += '<div class="signal-category-block">'
+        missing_signals_html += f"<h4>Category: <code>{category}</code></h4><ul>"
+        for k in keys:
+            missing_signals_html += f"<li><code>{k}</code></li>"
+        missing_signals_html += "</ul>"
+        # Close the wrapper div
+        missing_signals_html += '</div>'
+
+
+
+
 # --- HTML Generation ---
 color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
+
+
+
+
 
 html_content = """
 <html><head><title>Pipeline & Register Animation</title>
 <style>
 body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; }}
+.header-container {{
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* This will horizontally center all content in the container */
+    width: 100%;
+}}
 .controls {{ text-align: center; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }}
 .controls button {{ padding: 10px 20px; font-size: 16px; cursor: pointer; }} #cycleCounter {{ font-size: 18px; font-weight: bold; }}
 .speed-control-container {{ display: flex; align-items: center; gap: 5px; }}
@@ -637,10 +689,88 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 #arrow-svg {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }}
 .arrow {{ stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead); }}
 @keyframes dash {{ to {{ stroke-dashoffset: -10; }} }}
+
+
+/* --- Warning Box Styles --- */
+.missing-signals-box {{
+    max-width: 900px;
+    margin: 10px auto 25px auto; /* Center the box and add space */
+    padding: 20px;
+    border: 1px solid #ffb300;
+    background-color: #fff8e1;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    position: relative;
+    color: #5b4d24;
+}}
+.missing-signals-header {{
+    display: flex;
+    align-items: center;
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: #c58600;
+}}
+.missing-signals-box p {{
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    line-height: 1.5;
+}}
+.missing-signals-list {{
+    column-count: 3; /* Arrange signals in columns for compactness */
+    column-gap: 20px;
+}}
+.missing-signals-list h4 {{
+    margin-top: 0;
+    margin-bottom: 5px;
+    font-size: 14px;
+}}
+.missing-signals-list ul {{
+    list-style-type: none;
+    padding-left: 0;
+    margin: 0 0 15px 0;
+}}
+.missing-signals-list li {{
+    margin-bottom: 5px;
+}}
+.missing-signals-list li code {{
+    font-family: monospace;
+    background-color: #f0e9d1;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}}
+.signal-category-block {{
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid; /* For older browser compatibility */
+    page-break-inside: avoid;       /* For older browser compatibility */
+    padding: 5px; /* Adds a little internal spacing */
+}}
+.close-btn {{
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 24px;
+    font-weight: bold;
+    color: #c58600;
+    cursor: pointer;
+    line-height: 1;
+}}
+.close-btn:hover {{
+    color: #5b4d24;
+}}
+
+
 </style>
 </head>
 <body>
 <h2>Pipeline Animation with Register State</h2>
+
+<div style="font-size: 14px; margin-bottom: 10px;">
+{missing_signals_html}
+</div>
+</div>
+
 <div class="controls">
     <button id="prevBtn">Previous</button>
     <span id="cycleCounter">Cycle 0 / {{num_cycles}}</span>
@@ -665,6 +795,8 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
             <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
          </div>
+
+
 
     <div class="content-wrapper">
         <div class="pipeline-container">
@@ -1026,6 +1158,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     color_map_js=color_map_js,
     vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map),
     reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
+    missing_signals_html=missing_signals_html,
 )
 
 # --- Write the final HTML file ---
