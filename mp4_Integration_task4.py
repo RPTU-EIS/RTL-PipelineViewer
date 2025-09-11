@@ -19,6 +19,12 @@ CLOCK_SIGNAL = None
 
 while True:
     VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
+
+    # If user typed without ".vcd", append it
+    if not VCD_FILE.lower().endswith(".vcd"):
+        if os.path.exists(VCD_FILE + ".vcd"):
+            VCD_FILE = VCD_FILE + ".vcd"
+
     if os.path.exists(VCD_FILE):
         print(f"✅ Found VCD file: {VCD_FILE}")
         break
@@ -312,6 +318,12 @@ for signal in vcd.signals:
 ex_values_by_cycle = [{} for _ in range(num_cycles)]
 extract_signals_group(ex_signals, default_val=None, base=2, store_to=ex_values_by_cycle)
 
+opcode_values_by_cycle = [None] * num_cycles
+if hazard_signals.get("opcode"):
+    opcode_values_raw = extract_signal_at_cycles(hazard_signals["opcode"], default_val=None, base=2)
+    for i, val in enumerate(opcode_values_raw):
+        opcode_values_by_cycle[i] = val
+
 wb_values_by_cycle = [{} for _ in range(num_cycles)]
 extract_signals_group(wb_signals, default_val=None, base=2, store_to=wb_values_by_cycle)
 
@@ -349,6 +361,9 @@ for i in range(1, num_cycles):
 if num_cycles > 0:
     delayed_register_values_by_cycle[0] = {f"x{i}": "0x00000000" for i in range(32)}
 
+delayed_opcode_by_cycle_2c = [None] * num_cycles
+for i in range(2, num_cycles):
+    delayed_opcode_by_cycle_2c[i] = opcode_values_by_cycle[i-2]
 
 def convert_hex_immediates_to_decimal(disasm: str) -> str:
     def replace_hex(match):
@@ -369,32 +384,21 @@ for i in range(num_cycles):
     rs2 = delayed_hazard_data_by_cycle[i].get("rs2_addr")
     rd  = delayed_wb_values_by_cycle[i].get("rd")
     
+    # CHANGE THIS PART: Use the 2-cycle delayed opcode
+    raw_opcode = delayed_opcode_by_cycle_2c[i] # Use the new list here
 
-    # Decode instruction → extract opcode
+    # ... (the rest of the try/except block for parsing opcode remains the same) ...
     try:
-        raw_opcode = delayed_hazard_data_by_cycle[i].get("opcode")
         if isinstance(raw_opcode, str) and all(c in "01" for c in raw_opcode):
             opcode = int(raw_opcode, 2)
         elif isinstance(raw_opcode, int):
             opcode = raw_opcode
         else:
-            opcode = int(str(raw_opcode), 10)  # fallback
+            opcode = int(str(raw_opcode), 10) # fallback
     except (ValueError, TypeError):
         opcode = None
-    
-   # print(f"Cycle {i}: raw_opcode={raw_opcode}, parsed_opcode={opcode}")
-
 
     rs2_final = rs2 if opcode in opcodes_that_use_rs2 else None
-
-    #if i == 0:
-        #print(f"Raw transitions for rs2_addr:")
-       # print(vcd[hazard_signals['rs2_addr']].tv[:10])  # show first 10 changes
-
-       # print(f"Raw transitions for opcode:")
-       # print(vcd[hazard_signals['opcode']].tv[:10])
-
-    #print(f"Cycle {i}: rs1={rs1}, rs2={rs2_final}, rd={rd}, opcode={opcode}")
 
     reg_highlight_data_by_cycle.append({
         "id_rs1": rs1,
@@ -536,9 +540,15 @@ for cycle_idx in range(num_cycles):
                 )
 
                 if (op_a is not None) and (op_b is not None) and (res is not None):
-                    display = f"EX<br>{op_a} {operator_html} {op_b} = {res}"
-                    # Tooltip shows the plain (unescaped) version
-                    tooltip += f"\n--- ALU Op ---\n{op_a} {operator_plain} {op_b} = {res}"
+                    # Precompute signed result (32-bit)
+                    signed_result = res if res < 0x80000000 else res - 0x100000000
+
+                    # Store both signed and unsigned formats
+                    display = f'EX<br><span class="alu-unsigned">{op_a} {operator_html} {op_b} = {res}</span>'
+                    display += f'<span class="alu-signed" style="display:none;">{op_a} {operator_html} {op_b} = {signed_result}</span>'
+                    
+                    tooltip += f"\n--- ALU Op ---\n{op_a} {operator_plain} {op_b} = {res} (unsigned)"
+                    tooltip += f"\n{op_a} {operator_plain} {op_b} = {signed_result} (signed)"
             elif stage == "WB":
                 wb_data = delayed_wb_values_by_cycle[cycle_idx].get("wb_data")
                 wb_rd = delayed_wb_values_by_cycle[cycle_idx].get("rd")
@@ -644,8 +654,8 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 #speedValue {{ font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }}
 .content-wrapper {{ display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }}
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
-.pipeline-grid {{ grid-template-columns: 390px repeat(5, 120px); }}
-.register-grid {{ grid-template-columns: 120px 210px 95px 95px;}}
+.pipeline-grid {{ grid-template-columns: 380px repeat(5, 145px); }}
+.register-grid {{ grid-template-columns: 110px 210px 95px 95px;}}
 .grid-cell span {{    font-size: 16px; font-weight: bold;}}
 //.grid-cell.stage-cell {{
     font-size: 30px;
@@ -761,6 +771,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 }}
 
 
+
 </style>
 </head>
 <body>
@@ -780,6 +791,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="restartBtn">Restart</button>
     <button id="toggleArrowsBtn">Hide Forwaring</button>  
     <button id="toggleHazardsBtn">Show Hazards</button>  
+    <button id="toggleSignedBtn">Show Signed</button>
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
         <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
@@ -1147,6 +1159,25 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     // Initial setup
     populateStaticGrid();
     updateDisplay();
+
+
+
+    document.getElementById('toggleSignedBtn').addEventListener('click', () => {{{{
+    const signedElems = document.querySelectorAll('.alu-signed');
+    const unsignedElems = document.querySelectorAll('.alu-unsigned');
+
+    signedElems.forEach(el => {{{{
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    }}}});
+    unsignedElems.forEach(el => {{{{
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    }}}});
+
+    const btn = document.getElementById('toggleSignedBtn');
+    btn.textContent = btn.textContent === 'Show Signed' ? 'Show Unsigned' : 'Show Signed';
+}}}});
+
+
 </script>
 </body>
 </html>
