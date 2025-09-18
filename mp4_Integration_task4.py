@@ -7,6 +7,7 @@ import os
 import re
 import json 
 import webbrowser
+import sys
 
 # Initialize Capstone for RISC-V 32-bit disassembly
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
@@ -14,22 +15,25 @@ md.detail = True
 missing_signals_by_label = {}
 
 # --- Configuration ---
-# VCD_FILE = "dump5.vcd" # Your VCD file
+# VCD_FILE = "dump5.vcd" / Now we introduce the file
 CLOCK_SIGNAL = None 
 
-while True:
-    VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
-
-    # If user typed without ".vcd", append it
+if len(sys.argv) >= 2:
+    VCD_FILE = sys.argv[1]
     if not VCD_FILE.lower().endswith(".vcd"):
         if os.path.exists(VCD_FILE + ".vcd"):
             VCD_FILE = VCD_FILE + ".vcd"
-
-    if os.path.exists(VCD_FILE):
-        print(f"✅ Found VCD file: {VCD_FILE}")
-        break
-    else:
-        print(f"❌ File '{VCD_FILE}' not found. Please try again.\n")
+else:
+    while True:
+        VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
+        if not VCD_FILE.lower().endswith(".vcd"):
+            if os.path.exists(VCD_FILE + ".vcd"):
+                VCD_FILE = VCD_FILE + ".vcd"
+        if os.path.exists(VCD_FILE):
+            print(f"✅ Found VCD file: {VCD_FILE}")
+            break
+        else:
+            print(f"❌ File '{VCD_FILE}' not found. Please try again.\n")
 
 # --- Load VCD ---
 print(f"Loading VCD file: {VCD_FILE}")
@@ -56,7 +60,7 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
     resolved = {}
     print(f"\n🔎 Looking for {label} signals:")
     found, missing = 0, 0
-    all_vcd_signals = list(vcd.signals)  # Get all signal names
+    all_vcd_signals = list(vcd.signals)  
 
     for key, candidates in signal_dict.items():
         selected = resolve_signal(candidates, vcd)
@@ -384,17 +388,17 @@ for i in range(num_cycles):
     rs2 = delayed_hazard_data_by_cycle[i].get("rs2_addr")
     rd  = delayed_wb_values_by_cycle[i].get("rd")
     
-    # CHANGE THIS PART: Use the 2-cycle delayed opcode
-    raw_opcode = delayed_opcode_by_cycle_2c[i] # Use the new list here
+  
+    raw_opcode = delayed_opcode_by_cycle_2c[i] 
 
-    # ... (the rest of the try/except block for parsing opcode remains the same) ...
+    
     try:
         if isinstance(raw_opcode, str) and all(c in "01" for c in raw_opcode):
             opcode = int(raw_opcode, 2)
         elif isinstance(raw_opcode, int):
             opcode = raw_opcode
         else:
-            opcode = int(str(raw_opcode), 10) # fallback
+            opcode = int(str(raw_opcode), 10) 
     except (ValueError, TypeError):
         opcode = None
 
