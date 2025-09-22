@@ -38,7 +38,7 @@ The other imported modules (`os`, `re`, `json`, `webbrowser`, `collections`) are
 
     python generate_pipeline_matrix.py  (Pipeline Visualization - Matrix) // Task 4 and 5
 
-    multicycle_riscv_visualizer.py  // Task 4
+    multicycle_riscv_visualizer.py  // Task 3
     
     
     The script will print its progress to the console as it loads the VCD, detects cycles and extracts data.
