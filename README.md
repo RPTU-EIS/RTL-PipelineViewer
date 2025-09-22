@@ -31,7 +31,7 @@ This repository contains several tools. Choose the one that fits your needs.
 
 ### ### 1. Pipelined Processor Animator (Task 4 & 5)
 
-This script generates the full, interactive HTML animation. Check the vcd file to be in the same repository
+This script generates the full, interactive HTML animation. Check the vcd file to be in the same directory 
 
 **Command:**
 ```sh
@@ -41,7 +41,7 @@ This will produce an output file named `pipeline_animation.html` and open it in 
 
 ### ### 2. Pipeline Matrix Generator (Task 4 & 5)
 
-This script generates a static HTML table showing the state of each instruction at every cycle. Check the vcd file to be in the same repository
+This script generates a static HTML table showing the state of each instruction at every cycle. Check the vcd file to be in the same directory
 
 **Command:**
 ```sh
@@ -51,7 +51,7 @@ This will produce an output file named `pipeline_matrix.html`.
 
 ### ### 3. Multi-Cycle Processor Visualizer (Task 3)
 
-This script is specifically for visualizing a multi-cycle (non-pipelined) processor. Check the vcd file to be in the same repository
+This script is specifically for visualizing a multi-cycle (non-pipelined) processor. Check the vcd file to be in the same directory
 
 **Command:**
 ```sh
