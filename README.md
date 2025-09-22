@@ -34,9 +34,12 @@ The other imported modules (`os`, `re`, `json`, `webbrowser`, `collections`) are
 
 2.  **Run the Script**: Open a terminal or command prompt, navigate to the directory containing the script and execute it with the following command:
     
-    python mp4.py (Pipeline Animation with Register State)
+    python riscv_pipeline_visualizer.py // Pipeline Animation with Register State // Task 4 and 5
 
-    python vcd.py  (Pipeline Visualization (PC | Instruction / No. of cycle)
+    python generate_pipeline_matrix.py  (Pipeline Visualization - Matrix) // Task 4 and 5
+
+    multicycle_riscv_visualizer.py  // Task 4
+    
     
     The script will print its progress to the console as it loads the VCD, detects cycles and extracts data.
 ---------------
