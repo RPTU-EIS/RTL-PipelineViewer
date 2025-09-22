@@ -213,28 +213,29 @@ def main(vcd_file, output_html, list_only=False):
     # --- Process Data ---
     
     # 1. Disassemble all unique instructions found
-    pc_to_instr_map = {}
-    for pc, instr in zip(pc_vals, instr_vals):
-        if pc is not None and instr is not None and pc not in pc_to_instr_map and instr != 0:
-            instr_hex = f"{instr:08x}"
-            try:
-                # Convert the hex string to bytes and reverse for little-endian
-                instr_bytes = bytes.fromhex(instr_hex)[::-1]
-                disassembled = list(md.disasm(instr_bytes, pc))
-                
-                if disassembled:
-                    insn = disassembled[0]
-                    asm = f"{insn.mnemonic} {insn.op_str}"
-                else:
-                    # If Capstone returns nothing, it's an unknown instruction
-                    asm = "(unknown instruction)"
-                
-                pc_to_instr_map[pc] = {"hex": instr_hex, "asm": asm}
+    instr_word_to_info_map = {}
+    for i in range(num_cycles):
+        # We can only be sure of the PC-to-Instruction mapping during the Fetch stage
+        if fsm_stage_vals[i] == 0:  # 0 corresponds to the Fetch stage
+            pc = pc_vals[i]
+            instr_word = fetched_inst_vals[i]
 
-            except Exception as e:
-                # This will now print the specific error to the console
-                print(f"DEBUG: Disassembly failed for PC=0x{pc:x}, instr=0x{instr:x}. Error: {e}")
-                pc_to_instr_map[pc] = {"hex": instr_hex, "asm": "Disassembly Error"}
+            if instr_word is not None and instr_word not in instr_word_to_info_map and instr_word != 0:
+                instr_hex = f"{instr_word:08x}"
+                try:
+                    instr_bytes = bytes.fromhex(instr_hex)[::-1]
+                    disassembled = list(md.disasm(instr_bytes, pc))
+                    asm = f"{disassembled[0].mnemonic} {disassembled[0].op_str}" if disassembled else "(unknown)"
+                    instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": asm}
+                except Exception as e:
+                    print(f"DEBUG: Disassembly failed for PC=0x{pc:x}, instr=0x{instr_word:x}. Error: {e}")
+                    instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": "Disassembly Error"}
+    
+    # Add a default entry for nop/zero, which is always instruction 0x13 or 0x0
+    if 0 not in instr_word_to_info_map:
+        instr_word_to_info_map[0] = {"hex": "00000000", "asm": "nop"}
+    if 19 not in instr_word_to_info_map: # 0x13 is 19
+        instr_word_to_info_map[19] = {"hex": "00000013", "asm": "nop"}
 
     # 2. Reconstruct Register File state from writebacks
     register_data_js = [{"x" + str(j): "0x00000000" for j in range(32)}]
@@ -257,22 +258,42 @@ def main(vcd_file, output_html, list_only=False):
     # 3. Prepare final data structure for JavaScript
     multicycle_data_for_js = []
     stage_map = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
-    active_pc = 0
+    
+    # This variable will hold the instruction word currently being processed by the FSM
+    active_instr_word = 0
 
     for i in range(num_cycles):
         stage_name = stage_map.get(fsm_stage_vals[i], "Unknown")
         
-        if stage_name == "Fetch":
-            current_pc = pc_vals[i]
-            if current_pc is not None and current_pc != active_pc:
-                active_pc = current_pc
+        # The instruction being processed is the one in the instruction register.
+        # This value is the "source of truth" for the current operation.
+        current_instr_in_reg = instr_vals[i]
+        if current_instr_in_reg is not None:
+            active_instr_word = current_instr_in_reg
 
-        instr_info = pc_to_instr_map.get(active_pc, {"hex": "00000000", "asm": "nop"})
+        # --- START OF THE FIX ---
+
+        # Default to showing the instruction held in the main register.
+        word_to_lookup = active_instr_word
         
-        description = ""
         if stage_name == "Fetch":
+            # SPECIAL CASE: If we are fetching, the most intuitive thing to display
+            # is the NEW instruction being fetched from memory.
+            newly_fetched_word = fetched_inst_vals[i]
+            if newly_fetched_word is not None:
+                word_to_lookup = newly_fetched_word
+        
+        # Look up the assembly using the word we selected.
+        instr_info = instr_word_to_info_map.get(word_to_lookup, {"hex": "00000000", "asm": "nop"})
+        
+        # --- END OF THE FIX ---
+        description = ""
+        # The logic for generating the description for each stage remains the same.
+        # We just need to make sure we use the right PC for the Fetch description.
+        if stage_name == "Fetch":
+            pc = pc_vals[i]
             inst_val = fetched_inst_vals[i]
-            description = f"Fetching instruction from PC 0x{active_pc:08x}.\n"
+            description = f"Fetching instruction from PC 0x{pc:08x}.\n"
             if inst_val is not None:
                 description += f"  - Instruction word fetched: 0x{inst_val:08x}"
         
@@ -287,8 +308,8 @@ def main(vcd_file, output_html, list_only=False):
             imm = imm_sext_vals[i]
             
             description = f"Decoding instruction: 0x{inst:08x}\n"
-            if rs1 is not None: description += f"  - rs1: x{rs1}.\n"
-            if rs2 is not None: description += f"  - rs2: x{rs2}.\n"
+            if rs1 is not None: description += f"  - rs1: x{rs1}\n"
+            if rs2 is not None: description += f"  - rs2: x{rs2}\n"
             if rd is not None: description += f"  - rd: x{rd}\n"
             if op is not None: description += f"  - Opcode: 0b{op:07b}\n"
             if f3 is not None: description += f"  - funct3: 0b{f3:03b}\n"
@@ -297,18 +318,29 @@ def main(vcd_file, output_html, list_only=False):
 
             
             active_op = "None"
-            for op_name, val_list in active_op_signals.items():
-                if val_list[i] == 1:
-                    active_op = op_name
-                    break
+            if i + 1 < num_cycles:  # Boundary check to prevent errors on the last cycle
+                for op_name, val_list in active_op_signals.items():
+                    if val_list[i + 1] == 1:  # Look ahead to the next cycle
+                        active_op = op_name
+                        break
             description += f"Active function control signal: {active_op}"
 
         elif stage_name == "Execute":
             op_a = operand_a_vals[i]
             op_b = operand_b_vals[i]
-            res = alu_result_vals[i]
-            description = "Executing in ALU.\n"
-            # Format operands and result as hex for clarity
+            res = alu_result_vals[i + 1] if i + 1 < num_cycles else None
+
+            # The UPO for the current execution was determined in the PREVIOUS (Decode) cycle.
+            # So, we must check the control signals from cycle 'i-1'.
+            active_op_name = "UPO"
+            if i > 0: # Ensure we don't check a negative cycle index
+                for op_name, val_list in active_op_signals.items():
+                    if val_list[i - 1] == 1: # Check the PREVIOUS cycle's signals
+                        active_op_name = op_name
+                        break
+
+            description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
+
             if op_a is not None: description += f"  - Operand A: 0x{op_a:x}\n"
             if op_b is not None: description += f"  - Operand B: 0x{op_b:x}\n"
             if res is not None:  description += f"  - ALU Result: 0x{res:x}"
@@ -318,7 +350,7 @@ def main(vcd_file, output_html, list_only=False):
             
         elif stage_name == "Writeback":
             rd = rd_addr_vals[i]
-            res = alu_result_vals[i] # ALU result is the source for writeback
+            res = alu_result_vals[i]
             if rd is not None and rd != 0 and res is not None:
                 description = f"Writing ALU result 0x{res:x} to destination register x{rd}."
             else:
@@ -329,8 +361,91 @@ def main(vcd_file, output_html, list_only=False):
             "stage": stage_name,
             "description": description,
         })
+
+        # --- [DEBUG] Print key signals per cycle to understand timing ---
+    print("\n--- Cycle-by-Cycle Signal Debug ---")
+    print(f"{'Cycle':>5} | {'FSM Stage':>10} | {'PC':>10} | {'instReg':>10} | {'Fetched Inst':>12}")
+    print("-" * 65)
+    stage_map_debug = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
+    for i in range(num_cycles):
+        stage = stage_map_debug.get(fsm_stage_vals[i], "Unknown")
+        pc_hex = f"0x{pc_vals[i]:x}" if pc_vals[i] is not None else "N/A"
+        instr_hex = f"0x{instr_vals[i]:x}" if instr_vals[i] is not None else "N/A"
+        fetched_hex = f"0x{fetched_inst_vals[i]:x}" if fetched_inst_vals[i] is not None else "N/A"
+        print(f"{i:>5} | {stage:>10} | {pc_hex:>10} | {instr_hex:>10} | {fetched_hex:>12}")
+    print("-------------------------------------\n")
     
+    # --- ALU TIMING DEBUG TOOL ---
+    print("\n--- ALU Operation Timing Analysis ---")
+    print(f"{'Cycle':>5} | {'FSM Stage':>10} | {'Operand A':>12} | {'Operand B':>12} | {'ALU Result':>12}")
+    print("-" * 65)
+    stage_map_debug = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
+
+    for i in range(num_cycles):
+        stage_num = fsm_stage_vals[i]
+        stage_name = stage_map_debug.get(stage_num, "Unknown")
         
+        # We also want to see the ALU result in the cycle *after* execute
+        if stage_name == "Execute" or (i > 0 and stage_map_debug.get(fsm_stage_vals[i-1]) == "Execute"):
+            op_a = operand_a_vals[i]
+            op_b = operand_b_vals[i]
+            res = alu_result_vals[i]
+
+            # Format for hex display, handling None
+            op_a_hex = f"0x{op_a:x}" if op_a is not None else "N/A"
+            op_b_hex = f"0x{op_b:x}" if op_b is not None else "N/A"
+            res_hex = f"0x{res:x}" if res is not None else "N/A"
+            
+            print(f"{i:>5} | {stage_name:>10} | {op_a_hex:>12} | {op_b_hex:>12} | {res_hex:>12}")
+            
+    print("-----------------------------------------------------------------\n")
+
+
+
+
+    # --- UPO MISMATCH DEBUG TOOL ---
+    print("\n--- UPO vs. Decoded Instruction Analysis ---")
+    print(f"{'Cycle':>5} | {'Decoded ASM':<20} | {'Active Decode Signal':<20}")
+    print(f"{'Cycle':>5} | {'Executed ASM':<20} | {'Active Execute Signal':<20}")
+    print("-" * 75)
+    
+    decoded_asm_in_pipe = "nop" # Represents the instruction currently in the decode stage
+    
+    for i in range(num_cycles):
+        stage_num = fsm_stage_vals[i]
+        
+        # When in the DECODE stage, we identify the instruction and its control signal.
+        if stage_num == 1: # 1 is Decode
+            # Find the instruction word in the register
+            instr_word = instr_vals[i]
+            decoded_asm_in_pipe = instr_word_to_info_map.get(instr_word, {}).get("asm", "nop")
+            
+            # Find the active control signal during this decode
+            active_decode_signal = "None"
+            for op_name, val_list in active_op_signals.items():
+                if val_list[i] == 1:
+                    active_decode_signal = op_name
+                    break
+            
+            print(f"{i:>5} | {decoded_asm_in_pipe:<20} | {active_decode_signal:<20}")
+
+        # When in the EXECUTE stage, we check which instruction is being executed.
+        elif stage_num == 2: # 2 is Execute
+            # The executed instruction is the one we identified in the previous (decode) cycle
+            executed_asm = decoded_asm_in_pipe
+            
+            # Find the active control signal during this execute
+            active_execute_signal = "None"
+            for op_name, val_list in active_op_signals.items():
+                if val_list[i] == 1:
+                    active_execute_signal = op_name
+                    break
+
+            print(f"{i:>5} | {executed_asm:<20} | {active_execute_signal:<20}")
+            # Add a separator for clarity between instruction lifecycles
+            if active_execute_signal != "None":
+                 print("-" * 75)
+    
     # --- HTML Generation ---
     html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, missing_signals_by_label)
     
