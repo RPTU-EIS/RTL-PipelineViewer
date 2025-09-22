@@ -1,58 +1,64 @@
-======================================
-Pipeline Visualization Generator README
-======================================
+# RISC-V Pipeline Visualization Generator
 
-1. Overview
-This Python script generates an interactive HTML animation of a RISC-V processor's pipeline activity. It reads a Value Change Dump (VCD) file from a hardware simulation, processes the signal data, and creates a self-contained webpage to visualize the pipeline stages, register states and data hazards for each clock cycle.
+An interactive HTML animation generator for visualizing RISC-V processor pipeline activity from VCD simulation files.
 
-The final output is an HTML file that opens automatically in your web browser, allowing you to step through the simulation cycle by cycle.
+![Screenshot of the pipeline animation](pipeline_animation_screenshot.png)
 
----------------
-2. Requirements & Installation
+## ## Overview
 
-To run this script, you will need Python 3 and a few external libraries.
+This project provides Python scripts to generate interactive HTML visualizations of a RISC-V processor's activity. It reads a Value Change Dump (VCD) file from a hardware simulation, processes the signal data, and creates a self-contained webpage to visualize pipeline stages, register states, and data hazards for each clock cycle.
 
-### Dependencies:
-- **Python 3.x**
+## ## Features
 
-- **Required Python Libraries:**
-  - `vcdvcd`: To parse the VCD simulation file.
-  - `capstone`: A powerful disassembly framework used here for RISC-V instructions.
-  - `pandas`: This library is imported in the script, though not actively used in the final version's logic. It's good practice to have it installed if you plan to modify or extend the data processing parts.
+* **Interactive Animation:** A full pipeline animation with controls to play, pause, restart, and step through cycles.
+* **Matrix View:** A static table-based visualization for a high-level overview of the entire execution trace.
+* **Register State:** Tracks and displays the state of the register file at each cycle, highlighting changes.
+* **Hazard Visualization:** Clearly shows data forwarding paths and pipeline stalls.
 
-### Installation Steps:
-You can install all the required libraries using `pip`, Python's package installer. Open your terminal or command prompt and run the following command:
+## ## Requirements
 
+-   Python 3.x
+-   `vcdvcd`, `capstone`, `pandas`
+
+You can install the required libraries with pip:
+```sh
 pip install vcdvcd capstone pandas
+```
 
-The other imported modules (`os`, `re`, `json`, `webbrowser`, `collections`) are part of the Python standard library and do not require separate installation.
+## ## Usage
 
+This repository contains several tools. Choose the one that fits your needs.
 
-3. How to Use
----------------
-1.  **Place VCD File**: Make sure you have a vcd file named `dump.vcd` in the same directory as the Python script.
+### ### 1. Pipelined Processor Animator (Task 4 & 5)
 
-2.  **Run the Script**: Open a terminal or command prompt, navigate to the directory containing the script and execute it with the following command:
-    
-    python riscv_pipeline_visualizer.py // Pipeline Animation with Register State // Task 4 and 5
+This script generates the full, interactive HTML animation.
 
-    python generate_pipeline_matrix.py  (Pipeline Visualization - Matrix) // Task 4 and 5
+**Command:**
+```sh
+python riscv_pipeline_visualizer.py your_vcd_file.vcd
+```
+This will produce an output file named `pipeline_animation.html` and open it in your browser.
 
-    multicycle_riscv_visualizer.py  // Task 3
-    
-    
-    The script will print its progress to the console as it loads the VCD, detects cycles and extracts data.
----------------
-4.  **View the Output**: Once the script finishes, it will automatically generate a file named `pipeline_animation.html` and open it in your default web browser. You can then use the on-screen buttons (Previous, Next, Play, Restart) to navigate the pipeline animation.
----------------
-5. Configuration
-------------------
-The script is pre-configured for a specific hardware design's signal names. If your VCD file uses different signal paths, you will need to edit the Python script.
+### ### 2. Pipeline Matrix Generator (Task 4 & 5)
 
-All configurable paths are located at the top of the script in these Python dictionaries:
-- `stage_signals`
-- `instruction_signals`
-- `hazard_signals`
-- `register_signals`
+This script generates a static HTML table showing the state of each instruction at every cycle.
 
-You can also change the name of the input VCD file by modifying the `VCD_FILE` variable.
+**Command:**
+```sh
+python generate_pipeline_matrix.py your_vcd_file.vcd
+```
+This will produce an output file named `pipeline_matrix.html`.
+
+### ### 3. Multi-Cycle Processor Visualizer (Task 3)
+
+This script is specifically for visualizing a multi-cycle (non-pipelined) processor.
+
+**Command:**
+```sh
+python multicycle_riscv_visualizer.py your_vcd_file.vcd
+```
+This will produce an output file named `multicycle_animation.html`.
+
+## ## Configuration
+
+If your VCD file uses different signal paths than the ones expected, you will need to edit the corresponding Python script. The signal path dictionaries (`stage_signals`, `instruction_signals`, etc.) are located at the top of each script.
