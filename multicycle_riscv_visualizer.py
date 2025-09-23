@@ -17,9 +17,9 @@ missing_signals_by_label = {}
 def list_all_signals(vcd):
     print("\n--- VCD Signals Found ---")
     try:
-        signals = list(vcd.signals)   # vcd.signals is already iterable
+        signals = list(vcd.signals)   
     except AttributeError:
-        # fallback if using a different version of vcdvcd
+        
         signals = list(vcd.data.keys())
     
     if not signals:
@@ -137,7 +137,7 @@ def main(vcd_file, output_html, list_only=False):
         "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
         "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
         "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
-        # Active Function Control Signals
+        # UPO Function Control Signals
         "IS_ADD": ["MultiCycleRV32Icore.isADD"], "IS_ADDI": ["MultiCycleRV32Icore.isADDI"],
         "IS_SUB": ["MultiCycleRV32Icore.isSUB"], "IS_SLL": ["MultiCycleRV32Icore.isSLL"],
         "IS_SLT": ["MultiCycleRV32Icore.isSLT"], "IS_SLTU": ["MultiCycleRV32Icore.isSLTU"],
@@ -215,7 +215,7 @@ def main(vcd_file, output_html, list_only=False):
     # 1. Disassemble all unique instructions found
     instr_word_to_info_map = {}
     for i in range(num_cycles):
-        # We can only be sure of the PC-to-Instruction mapping during the Fetch stage
+       
         if fsm_stage_vals[i] == 0:  # 0 corresponds to the Fetch stage
             pc = pc_vals[i]
             instr_word = fetched_inst_vals[i]
@@ -259,37 +259,30 @@ def main(vcd_file, output_html, list_only=False):
     multicycle_data_for_js = []
     stage_map = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
     
-    # This variable will hold the instruction word currently being processed by the FSM
+    
     active_instr_word = 0
 
     for i in range(num_cycles):
         stage_name = stage_map.get(fsm_stage_vals[i], "Unknown")
         
-        # The instruction being processed is the one in the instruction register.
-        # This value is the "source of truth" for the current operation.
+ 
         current_instr_in_reg = instr_vals[i]
         if current_instr_in_reg is not None:
             active_instr_word = current_instr_in_reg
 
-        # --- START OF THE FIX ---
-
-        # Default to showing the instruction held in the main register.
+ 
         word_to_lookup = active_instr_word
         
         if stage_name == "Fetch":
-            # SPECIAL CASE: If we are fetching, the most intuitive thing to display
-            # is the NEW instruction being fetched from memory.
+        
             newly_fetched_word = fetched_inst_vals[i]
             if newly_fetched_word is not None:
                 word_to_lookup = newly_fetched_word
-        
-        # Look up the assembly using the word we selected.
+       
         instr_info = instr_word_to_info_map.get(word_to_lookup, {"hex": "00000000", "asm": "nop"})
         
-        # --- END OF THE FIX ---
         description = ""
-        # The logic for generating the description for each stage remains the same.
-        # We just need to make sure we use the right PC for the Fetch description.
+  
         if stage_name == "Fetch":
             pc = pc_vals[i]
             inst_val = fetched_inst_vals[i]
@@ -318,26 +311,25 @@ def main(vcd_file, output_html, list_only=False):
 
             
             active_op = "None"
-            if i + 1 < num_cycles:  # Boundary check to prevent errors on the last cycle
+            if i + 1 < num_cycles:  
                 for op_name, val_list in active_op_signals.items():
-                    if val_list[i + 1] == 1:  # Look ahead to the next cycle
+                    if val_list[i + 1] == 1:  
                         active_op = op_name
                         break
             description += f"Active function control signal: {active_op}"
 
+        
         elif stage_name == "Execute":
             op_a = operand_a_vals[i]
             op_b = operand_b_vals[i]
             res = alu_result_vals[i + 1] if i + 1 < num_cycles else None
 
-            # The UPO for the current execution was determined in the PREVIOUS (Decode) cycle.
-            # So, we must check the control signals from cycle 'i-1'.
+            # The control signals for the instruction being executed are valid in THIS cycle.
             active_op_name = "UPO"
-            if i > 0: # Ensure we don't check a negative cycle index
-                for op_name, val_list in active_op_signals.items():
-                    if val_list[i - 1] == 1: # Check the PREVIOUS cycle's signals
-                        active_op_name = op_name
-                        break
+            for op_name, val_list in active_op_signals.items():
+                if val_list[i] == 1:  # Check the CURRENT cycle's signals
+                    active_op_name = op_name
+                    break
 
             description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
 
@@ -445,6 +437,33 @@ def main(vcd_file, output_html, list_only=False):
             # Add a separator for clarity between instruction lifecycles
             if active_execute_signal != "None":
                  print("-" * 75)
+
+    
+        # --- REGISTER WRITEBACK DEBUG TOOL ---
+    print("\n--- Register File Writeback Analysis ---")
+    print(f"{'Cycle':>5} | {'Stage':>10} | {'Write Action':<40} | {'Next Cycle State Change'}")
+    print("-" * 90)
+    for i in range(num_cycles):
+        stage_num = fsm_stage_vals[i]
+        if stage_num == 4: # If the current stage is Writeback
+            rd = rd_addr_vals[i]
+            wb_data = wb_data_vals[i] # The value to be written comes from THIS cycle's wb_data
+
+            write_action = "No write (rd=x0 or data=None)"
+            if rd is not None and rd != 0 and wb_data is not None:
+                write_action = f"Attempting to write 0x{wb_data:x} to x{rd}"
+
+            next_cycle_state = "No change expected"
+            if i + 1 < len(register_data_js):
+                # The register_data_js is already built based on the logic we're verifying
+                new_val = register_data_js[i + 1].get(f"x{rd}")
+                old_val = register_data_js[i].get(f"x{rd}")
+                if new_val != old_val:
+                    next_cycle_state = f"x{rd} will be updated to {new_val}"
+
+            print(f"{i:>5} | {'Writeback':>10} | {write_action:<40} | {next_cycle_state}")
+    print("-" * 90 + "\n")
+    
     
     # --- HTML Generation ---
     html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, missing_signals_by_label)
@@ -477,6 +496,8 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
     <head>
         <meta charset="UTF-8">
         <title>Multi-Cycle Processor Animation</title>
+
+
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background-color: #f0f2f5; }}
             .container {{ max-width: 1200px; margin: 20px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -500,7 +521,12 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
             .register-value-cell {{ font-family: monospace; }}
             .register-value-cell.changed {{ background-color: #ffd700; transition: background-color 0.1s ease-in; }}
             .missing-signals-box {{ background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 6px; margin-bottom: 20px; }}
+            
+        
         </style>
+
+
+
     </head>
     <body>
         <div class="container">
