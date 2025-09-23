@@ -102,19 +102,20 @@ def main(vcd_file, output_html, list_only=False):
     
     # --- Load VCD ---
     print(f"Loading VCD file: {vcd_file}")
+
     try:
         vcd = VCDVCD(vcd_file, store_tvs=True)
     except FileNotFoundError:
         print(f"❌ Error: VCD file '{vcd_file}' not found.")
         return
+
+   
     
 
-
     
-    # Check if the user only wants to list the signals
     if list_only:
-        list_all_signals(vcd)
         return
+    
 
     # --- Signal Definitions for Multi-Cycle Core ---
     core_signals_raw = {
@@ -137,6 +138,8 @@ def main(vcd_file, output_html, list_only=False):
         "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
         "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
         "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
+        **{f"REG_{i}": [f"MultiCycleRV32Icore.regFile_{i}"] for i in range(32)},
+
         # UPO Function Control Signals
         "IS_ADD": ["MultiCycleRV32Icore.isADD"], "IS_ADDI": ["MultiCycleRV32Icore.isADDI"],
         "IS_SUB": ["MultiCycleRV32Icore.isSUB"], "IS_SLL": ["MultiCycleRV32Icore.isSLL"],
@@ -146,9 +149,6 @@ def main(vcd_file, output_html, list_only=False):
         "IS_AND": ["MultiCycleRV32Icore.isAND"],
     }
     core_signals = resolve_signals_with_log(core_signals_raw, vcd, "Core State")
-    
-    print("\nNOTE: Register file signals (e.g., regFile_0) are often not dumped to VCD.")
-    print("      State will be reconstructed from writeback signals.")
     
     # --- Clock and Cycle Detection ---
     clock_candidates = [sig for sig in vcd.signals if "clk" in sig.lower() or "clock" in sig.lower()]
@@ -169,57 +169,39 @@ def main(vcd_file, output_html, list_only=False):
     print(f"Detected {num_cycles} clock cycles.")
 
     
-
+    
     # --- Extract Data ---
     fsm_stage_vals = extract_signal_at_cycles(core_signals["FSM_STAGE"], vcd, rising_edges, base=2)
-    # --- FIX THE BASE FOR THE SIGNALS BELOW ---
     pc_vals = extract_signal_at_cycles(core_signals["PC"], vcd, rising_edges, base=2)
     instr_vals = extract_signal_at_cycles(core_signals["INSTRUCTION"], vcd, rising_edges, base=2)
     rd_addr_vals = extract_signal_at_cycles(core_signals["RD_ADDR"], vcd, rising_edges, base=2)
     alu_result_vals = extract_signal_at_cycles(core_signals["ALU_RESULT"], vcd, rising_edges, base=2)
     wb_data_vals = extract_signal_at_cycles(core_signals["WB_DATA"], vcd, rising_edges, base=2)
-
     fetched_inst_vals = extract_signal_at_cycles(core_signals["FETCHED_INST"], vcd, rising_edges, base=2)
-    
-    # --- ADD EXTRACTION FOR NEW SIGNALS ---
     rs1_addr_vals = extract_signal_at_cycles(core_signals["DECODED_RS1"], vcd, rising_edges, base=2)
     rs2_addr_vals = extract_signal_at_cycles(core_signals["DECODED_RS2"], vcd, rising_edges, base=2)
     operand_a_vals = extract_signal_at_cycles(core_signals["OPERAND_A"], vcd, rising_edges, base=2)
     operand_b_vals = extract_signal_at_cycles(core_signals["OPERAND_B"], vcd, rising_edges, base=2)
-
-        # Fetch stage signals
-    fetched_inst_vals = extract_signal_at_cycles(core_signals["FETCHED_INST"], vcd, rising_edges, base=2)
-    
-    # Decode stage signals
     opcode_vals = extract_signal_at_cycles(core_signals["OPCODE"], vcd, rising_edges, base=2)
     decoded_rd_vals = extract_signal_at_cycles(core_signals["DECODED_RD"], vcd, rising_edges, base=2)
     funct3_vals = extract_signal_at_cycles(core_signals["FUNCT3"], vcd, rising_edges, base=2)
     funct7_vals = extract_signal_at_cycles(core_signals["FUNCT7"], vcd, rising_edges, base=2)
     imm_sext_vals = extract_signal_at_cycles(core_signals["IMM_SEXT"], vcd, rising_edges, base=2)
 
-    # Store all 'is...' signals in a dictionary for easy access
     active_op_signals = {}
     for key, signal_path in core_signals.items():
         if key.startswith("IS_"):
             op_name = key.replace("IS_", "")
             active_op_signals[op_name] = extract_signal_at_cycles(signal_path, vcd, rising_edges, base=10)
 
-    print(f"\nDEBUG: FSM stage sequence found in VCD: {fsm_stage_vals}\n")
-
-    list_all_signals(vcd)
-    if list_only:
-        return
-
     # --- Process Data ---
     
     # 1. Disassemble all unique instructions found
     instr_word_to_info_map = {}
     for i in range(num_cycles):
-       
-        if fsm_stage_vals[i] == 0:  # 0 corresponds to the Fetch stage
+        if fsm_stage_vals[i] == 0:
             pc = pc_vals[i]
             instr_word = fetched_inst_vals[i]
-
             if instr_word is not None and instr_word not in instr_word_to_info_map and instr_word != 0:
                 instr_hex = f"{instr_word:08x}"
                 try:
@@ -228,65 +210,65 @@ def main(vcd_file, output_html, list_only=False):
                     asm = f"{disassembled[0].mnemonic} {disassembled[0].op_str}" if disassembled else "(unknown)"
                     instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": asm}
                 except Exception as e:
-                    print(f"DEBUG: Disassembly failed for PC=0x{pc:x}, instr=0x{instr_word:x}. Error: {e}")
                     instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": "Disassembly Error"}
     
-    # Add a default entry for nop/zero, which is always instruction 0x13 or 0x0
     if 0 not in instr_word_to_info_map:
         instr_word_to_info_map[0] = {"hex": "00000000", "asm": "nop"}
-    if 19 not in instr_word_to_info_map: # 0x13 is 19
+    if 19 not in instr_word_to_info_map:
         instr_word_to_info_map[19] = {"hex": "00000013", "asm": "nop"}
 
-    # 2. Reconstruct Register File state from writebacks
-    register_data_js = [{"x" + str(j): "0x00000000" for j in range(32)}]
-    current_regs = {"x" + str(j): 0 for j in range(32)}
+    # 2. Extract register file state directly from VCD signals
+    print("\nExtracting register file state...")
+    register_data_js = []
+    for i in range(num_cycles):
+        cycle_regs = {}
+        for j in range(32):
+            reg_key = f"REG_{j}"
+            reg_signal_name = core_signals.get(reg_key)
+            if reg_signal_name:
+                val_list = extract_signal_at_cycles(reg_signal_name, vcd, [rising_edges[i]], default_val=0, base=2)
+                val = val_list[0] if val_list else 0
+            else:
+                val = 0
+            cycle_regs[f"x{j}"] = f"0x{val:08x}"
+        register_data_js.append(cycle_regs)
+    print("✅ Register data extracted.")
     
-    for i in range(1, num_cycles):
-        # State at cycle 'i' depends on writeback from stage 'i-1'
-        prev_stage = fsm_stage_vals[i-1]
-        
-        if prev_stage == 4: # If previous cycle was 'writeback'
-            rd = rd_addr_vals[i-1]
-            wb_data = wb_data_vals[i-1]
-            if rd is not None and rd != 0 and wb_data is not None:
-                current_regs[f"x{rd}"] = wb_data
-        
-        # Format for JS display
-        formatted_regs = {f"x{j}": f"0x{val:08x}" for j, val in current_regs.items()}
-        register_data_js.append(formatted_regs)
-
+    list_all_signals(vcd)
     # 3. Prepare final data structure for JavaScript
     multicycle_data_for_js = []
+    reg_highlight_data = [] # <-- ADDED: Initialize list for highlight data
     stage_map = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
+
+    opcodes_that_use_rs2 = {
+    0b0110011,  # R-type (add, sub, and, etc.)
+    0b0100011,  # S-type (sw, sb)
+    0b1100011,  # B-type (beq, bne)
+    }
     
     
     active_instr_word = 0
-
     for i in range(num_cycles):
+        current_highlights = {} # <-- ADDED: Dictionary for current cycle's highlights
+
         stage_name = stage_map.get(fsm_stage_vals[i], "Unknown")
         
- 
         current_instr_in_reg = instr_vals[i]
         if current_instr_in_reg is not None:
             active_instr_word = current_instr_in_reg
-
- 
+        
         word_to_lookup = active_instr_word
-        
         if stage_name == "Fetch":
-        
             newly_fetched_word = fetched_inst_vals[i]
             if newly_fetched_word is not None:
                 word_to_lookup = newly_fetched_word
-       
         instr_info = instr_word_to_info_map.get(word_to_lookup, {"hex": "00000000", "asm": "nop"})
         
         description = ""
-  
         if stage_name == "Fetch":
             pc = pc_vals[i]
             inst_val = fetched_inst_vals[i]
-            description = f"Fetching instruction from PC 0x{pc:08x}.\n"
+            description = f"Fetching instruction from PC 0x{pc:08x}\n"
             if inst_val is not None:
                 description += f"  - Instruction word fetched: 0x{inst_val:08x}"
         
@@ -294,11 +276,17 @@ def main(vcd_file, output_html, list_only=False):
             inst = instr_vals[i]
             rs1 = rs1_addr_vals[i]
             rs2 = rs2_addr_vals[i]
-            op = opcode_vals[i]
             rd = decoded_rd_vals[i]
+            op = opcode_vals[i]
             f3 = funct3_vals[i]
             f7 = funct7_vals[i]
             imm = imm_sext_vals[i]
+            
+            current_highlights["read_rs1"] = rs1
+
+            # Only capture rs2 if the instruction's opcode is in our defined set
+            if op in opcodes_that_use_rs2:
+                current_highlights["read_rs2"] = rs2
             
             description = f"Decoding instruction: 0x{inst:08x}\n"
             if rs1 is not None: description += f"  - rs1: x{rs1}\n"
@@ -308,7 +296,6 @@ def main(vcd_file, output_html, list_only=False):
             if f3 is not None: description += f"  - funct3: 0b{f3:03b}\n"
             if f7 is not None: description += f"  - funct7: 0b{f7:07b}\n"
             if imm is not None: description += f"  - imm_sext: 0x{imm:x}\n\n"
-
             
             active_op = "None"
             if i + 1 < num_cycles:  
@@ -318,21 +305,18 @@ def main(vcd_file, output_html, list_only=False):
                         break
             description += f"Active function control signal: {active_op}"
 
-        
         elif stage_name == "Execute":
             op_a = operand_a_vals[i]
             op_b = operand_b_vals[i]
             res = alu_result_vals[i + 1] if i + 1 < num_cycles else None
-
-            # The control signals for the instruction being executed are valid in THIS cycle.
+            
             active_op_name = "UPO"
             for op_name, val_list in active_op_signals.items():
-                if val_list[i] == 1:  # Check the CURRENT cycle's signals
+                if val_list[i] == 1:
                     active_op_name = op_name
                     break
-
+            
             description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
-
             if op_a is not None: description += f"  - Operand A: 0x{op_a:x}\n"
             if op_b is not None: description += f"  - Operand B: 0x{op_b:x}\n"
             if res is not None:  description += f"  - ALU Result: 0x{res:x}"
@@ -343,6 +327,9 @@ def main(vcd_file, output_html, list_only=False):
         elif stage_name == "Writeback":
             rd = rd_addr_vals[i]
             res = alu_result_vals[i]
+            
+            current_highlights["write_rd"] = rd # <-- ADDED: Capture rd
+            
             if rd is not None and rd != 0 and res is not None:
                 description = f"Writing ALU result 0x{res:x} to destination register x{rd}."
             else:
@@ -353,120 +340,11 @@ def main(vcd_file, output_html, list_only=False):
             "stage": stage_name,
             "description": description,
         })
-
-        # --- [DEBUG] Print key signals per cycle to understand timing ---
-    print("\n--- Cycle-by-Cycle Signal Debug ---")
-    print(f"{'Cycle':>5} | {'FSM Stage':>10} | {'PC':>10} | {'instReg':>10} | {'Fetched Inst':>12}")
-    print("-" * 65)
-    stage_map_debug = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
-    for i in range(num_cycles):
-        stage = stage_map_debug.get(fsm_stage_vals[i], "Unknown")
-        pc_hex = f"0x{pc_vals[i]:x}" if pc_vals[i] is not None else "N/A"
-        instr_hex = f"0x{instr_vals[i]:x}" if instr_vals[i] is not None else "N/A"
-        fetched_hex = f"0x{fetched_inst_vals[i]:x}" if fetched_inst_vals[i] is not None else "N/A"
-        print(f"{i:>5} | {stage:>10} | {pc_hex:>10} | {instr_hex:>10} | {fetched_hex:>12}")
-    print("-------------------------------------\n")
-    
-    # --- ALU TIMING DEBUG TOOL ---
-    print("\n--- ALU Operation Timing Analysis ---")
-    print(f"{'Cycle':>5} | {'FSM Stage':>10} | {'Operand A':>12} | {'Operand B':>12} | {'ALU Result':>12}")
-    print("-" * 65)
-    stage_map_debug = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
-
-    for i in range(num_cycles):
-        stage_num = fsm_stage_vals[i]
-        stage_name = stage_map_debug.get(stage_num, "Unknown")
         
-        # We also want to see the ALU result in the cycle *after* execute
-        if stage_name == "Execute" or (i > 0 and stage_map_debug.get(fsm_stage_vals[i-1]) == "Execute"):
-            op_a = operand_a_vals[i]
-            op_b = operand_b_vals[i]
-            res = alu_result_vals[i]
-
-            # Format for hex display, handling None
-            op_a_hex = f"0x{op_a:x}" if op_a is not None else "N/A"
-            op_b_hex = f"0x{op_b:x}" if op_b is not None else "N/A"
-            res_hex = f"0x{res:x}" if res is not None else "N/A"
-            
-            print(f"{i:>5} | {stage_name:>10} | {op_a_hex:>12} | {op_b_hex:>12} | {res_hex:>12}")
-            
-    print("-----------------------------------------------------------------\n")
-
-
-
-
-    # --- UPO MISMATCH DEBUG TOOL ---
-    print("\n--- UPO vs. Decoded Instruction Analysis ---")
-    print(f"{'Cycle':>5} | {'Decoded ASM':<20} | {'Active Decode Signal':<20}")
-    print(f"{'Cycle':>5} | {'Executed ASM':<20} | {'Active Execute Signal':<20}")
-    print("-" * 75)
-    
-    decoded_asm_in_pipe = "nop" # Represents the instruction currently in the decode stage
-    
-    for i in range(num_cycles):
-        stage_num = fsm_stage_vals[i]
-        
-        # When in the DECODE stage, we identify the instruction and its control signal.
-        if stage_num == 1: # 1 is Decode
-            # Find the instruction word in the register
-            instr_word = instr_vals[i]
-            decoded_asm_in_pipe = instr_word_to_info_map.get(instr_word, {}).get("asm", "nop")
-            
-            # Find the active control signal during this decode
-            active_decode_signal = "None"
-            for op_name, val_list in active_op_signals.items():
-                if val_list[i] == 1:
-                    active_decode_signal = op_name
-                    break
-            
-            print(f"{i:>5} | {decoded_asm_in_pipe:<20} | {active_decode_signal:<20}")
-
-        # When in the EXECUTE stage, we check which instruction is being executed.
-        elif stage_num == 2: # 2 is Execute
-            # The executed instruction is the one we identified in the previous (decode) cycle
-            executed_asm = decoded_asm_in_pipe
-            
-            # Find the active control signal during this execute
-            active_execute_signal = "None"
-            for op_name, val_list in active_op_signals.items():
-                if val_list[i] == 1:
-                    active_execute_signal = op_name
-                    break
-
-            print(f"{i:>5} | {executed_asm:<20} | {active_execute_signal:<20}")
-            # Add a separator for clarity between instruction lifecycles
-            if active_execute_signal != "None":
-                 print("-" * 75)
-
-    
-        # --- REGISTER WRITEBACK DEBUG TOOL ---
-    print("\n--- Register File Writeback Analysis ---")
-    print(f"{'Cycle':>5} | {'Stage':>10} | {'Write Action':<40} | {'Next Cycle State Change'}")
-    print("-" * 90)
-    for i in range(num_cycles):
-        stage_num = fsm_stage_vals[i]
-        if stage_num == 4: # If the current stage is Writeback
-            rd = rd_addr_vals[i]
-            wb_data = wb_data_vals[i] # The value to be written comes from THIS cycle's wb_data
-
-            write_action = "No write (rd=x0 or data=None)"
-            if rd is not None and rd != 0 and wb_data is not None:
-                write_action = f"Attempting to write 0x{wb_data:x} to x{rd}"
-
-            next_cycle_state = "No change expected"
-            if i + 1 < len(register_data_js):
-                # The register_data_js is already built based on the logic we're verifying
-                new_val = register_data_js[i + 1].get(f"x{rd}")
-                old_val = register_data_js[i].get(f"x{rd}")
-                if new_val != old_val:
-                    next_cycle_state = f"x{rd} will be updated to {new_val}"
-
-            print(f"{i:>5} | {'Writeback':>10} | {write_action:<40} | {next_cycle_state}")
-    print("-" * 90 + "\n")
-    
+        reg_highlight_data.append(current_highlights) # <-- ADDED: Append highlight data for the cycle
     
     # --- HTML Generation ---
-    html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, missing_signals_by_label)
+    html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, reg_highlight_data, missing_signals_by_label) # <-- MODIFIED: Pass new data
     
     with open(output_html, "w", encoding="utf-8") as f:
         f.write(html_content)
@@ -474,11 +352,10 @@ def main(vcd_file, output_html, list_only=False):
     print(f"\n✅ Successfully generated '{output_html}'.")
     webbrowser.open_new_tab(os.path.abspath(output_html))
 
-
-def create_html(num_cycles, multicycle_data, register_data, missing_signals):
+# <-- REPLACED BLOCK: Entire create_html function is updated -->
+def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, missing_signals):
     """Generates the full HTML content string with embedded data."""
     
-    # Build a styled warning box for missing signals, if any
     missing_signals_html = ""
     if any(missing_signals.values()):
         missing_signals_html = '<div class="missing-signals-box">'
@@ -496,8 +373,6 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
     <head>
         <meta charset="UTF-8">
         <title>Multi-Cycle Processor Animation</title>
-
-
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background-color: #f0f2f5; }}
             .container {{ max-width: 1200px; margin: 20px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -514,19 +389,46 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
             #current-asm {{ font-family: monospace; font-size: 24px; font-weight: bold; color: #000; }}
             #current-stage {{ font-size: 28px; font-weight: bold; padding: 10px; border-radius: 6px; text-align: center; transition: all 0.3s ease; }}
             #details-box {{ white-space: pre-wrap; font-family: monospace; background: #282c34; color: #abb2bf; padding: 15px; border-radius: 6px; min-height: 80px; }}
-            .register-grid {{ display: grid; grid-template-columns: 120px 1fr; border: 1px solid #ccc; }}
+            .register-grid {{ display: grid; grid-template-columns: 120px 1fr 70px 70px; border: 1px solid #ccc; }}
+            .register-grid .grid-cell {{
+                height: 25px; /* Give all cells a fixed height */
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            .register-grid .register-name-cell {{
+                justify-content: flex-start; /* Keep register names left-aligned */
+            }}
+
             .grid-header, .grid-cell {{ padding: 6px; border: 1px solid #eee; text-align: center; font-size: 14px; }}
             .grid-header {{ background-color: #e9ecef; font-weight: bold; }}
             .register-name-cell {{ font-family: monospace; text-align: left !important; padding-left: 10px !important; }}
             .register-value-cell {{ font-family: monospace; }}
             .register-value-cell.changed {{ background-color: #ffd700; transition: background-color 0.1s ease-in; }}
             .missing-signals-box {{ background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 6px; margin-bottom: 20px; }}
-            
-        
+            .stage-display-container {{                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+            }}
+            .stage-box {{
+                flex: 1;
+                text-align: center;
+                padding: 12px 5px;
+                border-radius: 6px;
+                border: 2px solid #e9ecef;
+                background-color: #f8f9fa;
+                color: #6c757d;
+                font-weight: bold;
+                font-size: 16px;
+                transition: all 0.3s ease-in-out; /* For smooth animation */
+            }}
+            .stage-box.active {{
+                transform: scale(1.08); /* Make it slightly bigger */
+                color: white; /* White text for active state */
+                border-width: 3px;
+            }}
+
         </style>
-
-
-
     </head>
     <body>
         <div class="container">
@@ -546,8 +448,14 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
                         <div id="current-asm">...</div>
                     </div>
                     <div class="status-box">
-                        <h4>CURRENT FSM STAGE</h4>
-                        <div id="current-stage">...</div>
+                        <h4>PROCESSOR STAGES</h4>
+                        <div class="stage-display-container">
+                            <div id="stage-box-Fetch" class="stage-box">Fetch</div>
+                            <div id="stage-box-Decode" class="stage-box">Decode</div>
+                            <div id="stage-box-Execute" class="stage-box">Execute</div>
+                            <div id="stage-box-Memory" class="stage-box">Memory</div>
+                            <div id="stage-box-Writeback" class="stage-box">Writeback</div>
+                        </div>
                     </div>
                     <div class="status-box">
                         <h4>PROCESSOR ACTIVITY</h4>
@@ -564,10 +472,11 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
         <script>
             const multicycleData = {multicycle_data_js};
             const registerData = {register_data_js};
+            const regHighlightData = {reg_highlight_data_js};
             const numCycles = {num_cycles};
             const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
             const stageColors = {{
-                "Fetch": "#007bff", "Decode": "#28a745", "Execute": "#ffc107",
+                "Fetch": "#ffc107", "Decode": "#28a745", "Execute": "#007bff",
                 "Memory": "#6f42c1", "Writeback": "#dc3545", "Unknown": "#6c757d"
             }};
 
@@ -576,19 +485,32 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
 
             function updateDisplay() {{
                 const cycleData = multicycleData[currentCycle];
-                
+
                 document.getElementById('cycleCounter').textContent = `Cycle ${{currentCycle}} / ${{numCycles - 1}}`;
                 document.getElementById('current-asm').textContent = cycleData.asm;
-                
-                const stageEl = document.getElementById('current-stage');
-                stageEl.textContent = cycleData.stage;
-                stageEl.style.backgroundColor = stageColors[cycleData.stage] + '20'; // transparent version
-                stageEl.style.color = stageColors[cycleData.stage];
-                
                 document.getElementById('details-box').textContent = cycleData.description;
 
+                // --- START: New Stage Highlighting Logic ---
+                // 1. First, remove the 'active' class from all stage boxes to reset them
+                document.querySelectorAll('.stage-box').forEach(el => {{
+                    el.classList.remove('active');
+                    el.style.backgroundColor = ''; // Clear specific colors
+                    el.style.borderColor = '';
+                }});
+
+                // 2. Then, find the box for the current stage and activate it
+                const currentStageName = cycleData.stage;
+                const activeStageEl = document.getElementById(`stage-box-${{currentStageName}}`);
+                if (activeStageEl) {{
+                    activeStageEl.classList.add('active');
+                    // Use the colors we already have for a consistent look
+                    activeStageEl.style.backgroundColor = stageColors[currentStageName];
+                    activeStageEl.style.borderColor = stageColors[currentStageName];
+                }}
+                // --- END: New Stage Highlighting Logic ---
+
                 updateRegisterTable();
-                
+
                 document.getElementById('prevBtn').disabled = currentCycle === 0;
                 document.getElementById('nextBtn').disabled = currentCycle >= numCycles - 1;
             }}
@@ -596,6 +518,8 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
             function updateRegisterTable() {{
                 const currentRegs = registerData[currentCycle] || {{}};
                 const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {{}};
+                const highlights = regHighlightData[currentCycle] || {{}};
+                const prev_highlights = currentCycle > 0 ? regHighlightData[currentCycle - 1] : {{}};
 
                 for (let i = 0; i < 32; i++) {{
                     const valCell = document.getElementById(`reg-val-${{i}}`);
@@ -603,12 +527,27 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
                     const prevVal = prevRegs[`x${{i}}`] || '0x00000000';
                     valCell.textContent = currentVal;
                     valCell.classList.toggle('changed', currentVal !== prevVal);
+
+                    const readCell = document.getElementById(`reg-read-${{i}}`);
+                    const writeCell = document.getElementById(`reg-write-${{i}}`);
+                    readCell.innerHTML = '';
+                    writeCell.innerHTML = '';
+
+                    // Show read indicators for the instruction NOW in the Execute stage
+                    if (prev_highlights.read_rs1 === i || prev_highlights.read_rs2 === i) {{
+                        readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
+                    }}
+
+                    // Show write indicator for the instruction NOW in the Writeback stage
+                    if (i !== 0 && highlights.write_rd === i) {{
+                        writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+                    }}
                 }}
             }}
 
             function populateStaticGrid() {{
                 const registerTable = document.getElementById('registerTable');
-                registerTable.innerHTML = '<div class="grid-header">Register</div><div class="grid-header">Value</div>';
+                registerTable.innerHTML = '<div class="grid-header">Register</div><div class="grid-header">Value</div><div class="grid-header">Read (EX)</div><div class="grid-header">Write (WB)</div>';
                 for (let i = 0; i < 32; i++) {{
                     const nameCell = document.createElement('div');
                     nameCell.className = 'grid-cell register-name-cell';
@@ -619,6 +558,16 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
                     valueCell.className = 'grid-cell register-value-cell';
                     valueCell.id = `reg-val-${{i}}`;
                     registerTable.appendChild(valueCell);
+
+                    const readCell = document.createElement('div');
+                    readCell.className = 'grid-cell';
+                    readCell.id = `reg-read-${{i}}`;
+                    registerTable.appendChild(readCell);
+
+                    const writeCell = document.createElement('div');
+                    writeCell.className = 'grid-cell';
+                    writeCell.id = `reg-write-${{i}}`;
+                    registerTable.appendChild(writeCell);
                 }}
             }}
             
@@ -650,10 +599,10 @@ def create_html(num_cycles, multicycle_data, register_data, missing_signals):
         num_cycles=num_cycles - 1,
         multicycle_data_js=json.dumps(multicycle_data),
         register_data_js=json.dumps(register_data),
+        reg_highlight_data_js=json.dumps(reg_highlight_data), # <-- MODIFIED: Pass new data
         missing_signals_html=missing_signals_html
     )
     return html_template
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate an HTML animation for a multi-cycle RISC-V processor from a VCD file or list its signals.")
