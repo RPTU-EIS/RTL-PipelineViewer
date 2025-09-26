@@ -7,6 +7,7 @@ from collections import defaultdict
 from capstone import Cs, CS_ARCH_RISCV, CS_MODE_RISCV32
 from vcdvcd import VCDVCD
 import struct
+import difflib 
 
 # --- Initial Setup ---
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
@@ -42,7 +43,7 @@ def resolve_signal(signal_names, vcd):
     return None
 
 def resolve_signals_with_log(signal_dict, vcd, label=""):
-    """Resolve a dictionary of signals and log the findings."""
+    """Resolve a dictionary of signals and log the findings with robust suggestions."""
     resolved = {}
     print(f"\n🔎 Looking for {label} signals:")
     found, missing = 0, 0
@@ -56,6 +57,29 @@ def resolve_signals_with_log(signal_dict, vcd, label=""):
             found += 1
         else:
             print(f"⚠️ {key} not found in VCD file.")
+            
+            # --- START: Robust suggestion logic ---
+            # Normalize the key by making it lowercase and removing underscores
+            key_normalized = key.lower().replace('_', '')
+            suggestions = []
+
+            for sig in all_vcd_signals:
+                # Get the final part of the signal name (basename) and normalize it
+                sig_basename_normalized = sig.split('.')[-1].lower()
+
+                # Check if the normalized key is a substring of the normalized signal basename.
+                # This handles 'rd' in 'rdReg' and 'alu_result' matching 'aluResult'.
+                if key_normalized in sig_basename_normalized:
+                    suggestions.append(sig)
+
+            if suggestions:
+                print(f"   🔍 Possible signals found in VCD that resemble '{key}':")
+                for s in suggestions[:5]:
+                    print(f"       • {s}")
+            else:
+                print(f"   ℹ️ No similar signals found for '{key}' in VCD.")
+            # --- END: Robust suggestion logic ---
+            
             missing += 1
     
     print(f"🧾 {label} summary: {found} found, {missing} missing.")
@@ -96,18 +120,9 @@ def extract_signal_at_cycles(signal_name, vcd, rising_edges, default_val=None, b
 
 
 # --- Main Script Logic ---
-def main(vcd_file, output_html, list_only=False):
+def main(vcd, vcd_file_name, output_html, list_only=False): 
     """Main function to process VCD and generate HTML."""
     global missing_signals_by_label
-    
-    # --- Load VCD ---
-    print(f"Loading VCD file: {vcd_file}")
-
-    try:
-        vcd = VCDVCD(vcd_file, store_tvs=True)
-    except FileNotFoundError:
-        print(f"❌ Error: VCD file '{vcd_file}' not found.")
-        return
 
    
     
@@ -135,6 +150,8 @@ def main(vcd_file, output_html, list_only=False):
         "IMM_SEXT": ["MultiCycleRV32Icore.immI_sext"],
         "DECODED_RS1": ["MultiCycleRV32Icore.rs1"],
         "DECODED_RS2": ["MultiCycleRV32Icore.rs2"],
+        "DECODED_RS1_DATA": ["MultiCycleRV32Icore.rs1Data"],
+        "DECODED_RS2_DATA": ["MultiCycleRV32Icore.rs2Data"],
         "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
         "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
         "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
@@ -180,6 +197,8 @@ def main(vcd_file, output_html, list_only=False):
     fetched_inst_vals = extract_signal_at_cycles(core_signals["FETCHED_INST"], vcd, rising_edges, base=2)
     rs1_addr_vals = extract_signal_at_cycles(core_signals["DECODED_RS1"], vcd, rising_edges, base=2)
     rs2_addr_vals = extract_signal_at_cycles(core_signals["DECODED_RS2"], vcd, rising_edges, base=2)
+    rs1_data_vals = extract_signal_at_cycles(core_signals["DECODED_RS1_DATA"], vcd, rising_edges, base=2)
+    rs2_data_vals = extract_signal_at_cycles(core_signals["DECODED_RS2_DATA"], vcd, rising_edges, base=2)
     operand_a_vals = extract_signal_at_cycles(core_signals["OPERAND_A"], vcd, rising_edges, base=2)
     operand_b_vals = extract_signal_at_cycles(core_signals["OPERAND_B"], vcd, rising_edges, base=2)
     opcode_vals = extract_signal_at_cycles(core_signals["OPCODE"], vcd, rising_edges, base=2)
@@ -276,6 +295,8 @@ def main(vcd_file, output_html, list_only=False):
             inst = instr_vals[i]
             rs1 = rs1_addr_vals[i]
             rs2 = rs2_addr_vals[i]
+            rs1Data = rs1_data_vals[i] 
+            rs2Data = rs2_data_vals[i] 
             rd = decoded_rd_vals[i]
             op = opcode_vals[i]
             f3 = funct3_vals[i]
@@ -295,7 +316,9 @@ def main(vcd_file, output_html, list_only=False):
             if op is not None: description += f"  - Opcode: 0b{op:07b}\n"
             if f3 is not None: description += f"  - funct3: 0b{f3:03b}\n"
             if f7 is not None: description += f"  - funct7: 0b{f7:07b}\n"
-            if imm is not None: description += f"  - imm_sext: 0x{imm:x}\n\n"
+            if imm is not None: description += f"  - imm_sext: 0x{imm:x}\n"
+            if rs1Data is not None: description += f"  - rs1Data: 0x{rs1Data:08x}\n"
+            if rs2Data is not None: description += f"  - rs2Data: 0x{rs2Data:08x}\n\n"
             
             active_op = "None"
             if i + 1 < num_cycles:  
@@ -319,19 +342,19 @@ def main(vcd_file, output_html, list_only=False):
             description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
             if op_a is not None: description += f"  - Operand A: 0x{op_a:x}\n"
             if op_b is not None: description += f"  - Operand B: 0x{op_b:x}\n"
-            if res is not None:  description += f"  - ALU Result: 0x{res:x}"
+            if res is not None:  description += f"  - ALU Result: {op_a:x} {active_op_name} {op_b:x} = {res:x}"
 
         elif stage_name == "Memory":
             description = "Memory stage (no operation for this core)."
             
         elif stage_name == "Writeback":
             rd = rd_addr_vals[i]
-            res = alu_result_vals[i]
+            res =wb_data_vals[i] 
             
             current_highlights["write_rd"] = rd # <-- ADDED: Capture rd
             
             if rd is not None and rd != 0 and res is not None:
-                description = f"Writing ALU result 0x{res:x} to destination register x{rd}."
+                description = f"Writing ALU result: {res:x} to destination register(rd) x{rd}."
             else:
                 description = "Writeback stage (no write to x0)."
 
@@ -351,6 +374,18 @@ def main(vcd_file, output_html, list_only=False):
     
     print(f"\n✅ Successfully generated '{output_html}'.")
     webbrowser.open_new_tab(os.path.abspath(output_html))
+
+    if any(missing_signals_by_label.values()):
+        total_missing = sum(len(v) for v in missing_signals_by_label.values())
+        print("\n" + "="*50)
+        print(f"⚠️  Warning: {total_missing} required signal(s) were not found.")
+        print("   The generated HTML animation may be incomplete.")
+        print("   Please review the detailed log above for specifics.")
+        print("="*50)
+    
+
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html_content)
 
 # <-- REPLACED BLOCK: Entire create_html function is updated -->
 def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, missing_signals):
@@ -520,6 +555,7 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
                 const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {{}};
                 const highlights = regHighlightData[currentCycle] || {{}};
                 const prev_highlights = currentCycle > 0 ? regHighlightData[currentCycle - 1] : {{}};
+                
 
                 for (let i = 0; i < 32; i++) {{
                     const valCell = document.getElementById(`reg-val-${{i}}`);
@@ -606,9 +642,42 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate an HTML animation for a multi-cycle RISC-V processor from a VCD file or list its signals.")
-    parser.add_argument("vcd_file", help="Path to the VCD file to process.")
+    parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
     parser.add_argument("-o", "--output", default="multicycle_animation.html", help="Name of the output HTML file.")
     parser.add_argument("-l", "--list-signals", action="store_true", help="Only list all signal names in the VCD file and exit.")
     args = parser.parse_args()
-    
-    main(args.vcd_file, args.output, args.list_signals)
+
+    vcd_file = args.vcd_file
+
+    # If no VCD file is provided via command line, ask the user for it.
+    if not vcd_file:
+        while True:
+            vcd_file = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
+            # Automatically try to add .vcd if missing
+            if not vcd_file.lower().endswith(".vcd") and os.path.exists(vcd_file + ".vcd"):
+                vcd_file = vcd_file + ".vcd"
+
+            if os.path.exists(vcd_file):
+                print(f"✅ Found VCD file: {vcd_file}")
+                break
+            else:
+                print(f"❌ File '{vcd_file}' not found. Please try again.\n")
+    else:
+        # If a file was provided, check if it exists (and try adding .vcd)
+        if not vcd_file.lower().endswith(".vcd") and os.path.exists(vcd_file + ".vcd"):
+            vcd_file = vcd_file + ".vcd"
+
+        if not os.path.exists(vcd_file):
+            print(f"❌ Error: File '{vcd_file}' not found.")
+            exit() # Exit if the file from command line doesn't exist
+
+    # --- Load VCD ---
+    print(f"Loading VCD file: {vcd_file}")
+    try:
+        vcd = VCDVCD(vcd_file, store_tvs=True)
+    except Exception as e:
+        print(f"❌ Error: Failed to load VCD file '{vcd_file}'. Reason: {e}")
+        exit()
+
+    # Call the main processing function with the loaded vcd object
+    main(vcd, vcd_file, args.output, args.list_signals)
