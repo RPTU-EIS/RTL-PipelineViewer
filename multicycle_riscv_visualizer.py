@@ -194,42 +194,56 @@ def default_signal_map():
     }
 
 
+
+
+
+
 # --- Main Script Logic ---
 def main(vcd, vcd_file_name, output_html, list_only=False): 
     """Main function to process VCD and generate HTML."""
-    global missing_signals_by_label
-
-   
+    global missing_signals_by_label, runtime_warnings
     
+    # --- Step 1: Welcome & Initial Info ---
+    print("\n" + "="*50)
+    print(" VCD to HTML Animation Generator")
+    print("="*50)
+    print(f"📂 VCD File:         {vcd_file_name}")
+    print(f"📊 Total Signals:    {len(vcd.signals)}")
 
-    
     if list_only:
+        list_all_signals(vcd)
         return
     
-
-    # --- Signal Definitions for Multi-Cycle Core ---
-    config_used = None
-    if getattr(args, "config", None):
+    # --- Step 2: Signal Mapping ---
+    print("\n" + "-"*50)
+    print(" Step 1: Mapping Signals...")
+    print("-" * 50)
+    
+    config_path = getattr(args, "config", None)
+    if config_path:
         try:
-            print(f"Loading signal map from: {args.config}")
-            core_signals_raw = load_signal_map(args.config)
-            config_used = args.config   # mark success
+            print(f"Attempting to load signal map from: {config_path}")
+            core_signals_raw = load_signal_map(config_path)
+            print(f"✅ Successfully loaded '{config_path}'")
         except Exception as e:
-            msg = f"  Failed to load config '{args.config}': {e}\n  Falling back to built-in defaults."
-            print(msg)
+            msg = f"Failed to load config '{config_path}': {e}\nFalling back to built-in defaults."
+            print(f"  ⚠️ {msg}")
             runtime_warnings.append(msg)
             core_signals_raw = default_signal_map()
     else:
+        print("Using built-in default signal map.")
         core_signals_raw = default_signal_map()
 
-    core_signals = resolve_signals_with_log(core_signals_raw, vcd, "Core State")
+    core_signals = resolve_signals_with_log(core_signals_raw, vcd, "Core Signals")
     
-    # --- Clock and Cycle Detection ---
+    # --- Step 3: Clock & Cycle Detection ---
+    print("\n" + "-"*50)
+    print(" Step 2: Analyzing Clock Cycles...")
+    print("-" * 50)
     clock_candidates = [sig for sig in vcd.signals if "clk" in sig.lower() or "clock" in sig.lower()]
     if not clock_candidates:
         raise RuntimeError("No clock signal found.")
     clock_signal = clock_candidates[0]
-    print(f"\nUsing clock signal: {clock_signal}")
     
     clock_tv = vcd[clock_signal].tv
     clock_tv_sorted = sorted(clock_tv)
@@ -240,13 +254,18 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
             rising_edges.append(t)
         prev_val = val
     num_cycles = len(rising_edges)
-    print(f"Detected {num_cycles} clock cycles.")
+    print(f"✅ Found clock signal: {clock_signal}")
+    print(f"✅ Detected {num_cycles} clock cycles.")
 
-    
-    
+    # --- Step 4: Data Extraction & Processing ---
+    print("\n" + "-"*50)
+    print(" Step 3: Extracting data and generating animation...")
+    print("-" * 50)
+
     # --- Extract Data ---
     fsm_stage_vals = extract_signal_at_cycles(core_signals["STAGE"], vcd, rising_edges, base=2)
     pc_vals = extract_signal_at_cycles(core_signals["PC"], vcd, rising_edges, base=2)
+    # ... (all other extract_signal_at_cycles calls remain the same) ...
     instr_vals = extract_signal_at_cycles(core_signals["INSTRUCTION"], vcd, rising_edges, base=2)
     rd_addr_vals = extract_signal_at_cycles(core_signals["RD_ADDR"], vcd, rising_edges, base=2)
     alu_result_vals = extract_signal_at_cycles(core_signals["ALU_RESULT"], vcd, rising_edges, base=2)
@@ -263,15 +282,14 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
     funct3_vals = extract_signal_at_cycles(core_signals["FUNCT3"], vcd, rising_edges, base=2)
     funct7_vals = extract_signal_at_cycles(core_signals["FUNCT7"], vcd, rising_edges, base=2)
     imm_sext_vals = extract_signal_at_cycles(core_signals["IMM_SEXT"], vcd, rising_edges, base=2)
-
+    
     active_op_signals = {}
     for key, signal_path in core_signals.items():
         if key.startswith("IS_"):
             op_name = key.replace("IS_", "")
             active_op_signals[op_name] = extract_signal_at_cycles(signal_path, vcd, rising_edges, base=10)
 
-    # --- Process Data ---
-    
+    # ... (the rest of the data processing code, from instr_word_to_info_map down to the end of the `for` loop, remains unchanged) ...
     # 1. Disassemble all unique instructions found
     instr_word_to_info_map = {}
     for i in range(num_cycles):
@@ -287,14 +305,13 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
                     instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": asm}
                 except Exception as e:
                     instr_word_to_info_map[instr_word] = {"hex": instr_hex, "asm": "Disassembly Error"}
-    
     if 0 not in instr_word_to_info_map:
         instr_word_to_info_map[0] = {"hex": "00000000", "asm": "nop"}
     if 19 not in instr_word_to_info_map:
         instr_word_to_info_map[19] = {"hex": "00000013", "asm": "nop"}
 
     # 2. Extract register file state directly from VCD signals
-    print("\nExtracting register file state...")
+    print("Extracting register file state...")
     register_data_js = []
     for i in range(num_cycles):
         cycle_regs = {}
@@ -308,31 +325,24 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
                 val = 0
             cycle_regs[f"x{j}"] = fmt_hex_dec(val)
         register_data_js.append(cycle_regs)
-    print("✅ Register data extracted.")
-    
-    list_all_signals(vcd)
+    print("✅ Data extraction complete.")
+
     # 3. Prepare final data structure for JavaScript
     multicycle_data_for_js = []
-    reg_highlight_data = [] # <-- ADDED: Initialize list for highlight data
+    reg_highlight_data = []
     stage_map = {0: "Fetch", 1: "Decode", 2: "Execute", 3: "Memory", 4: "Writeback"}
-
     opcodes_that_use_rs2 = {
-    0b0110011,  # R-type (add, sub, and, etc.)
-    0b0100011,  # S-type (sw, sb)
-    0b1100011,  # B-type (beq, bne)
+        0b0110011,  # R-type
+        0b0100011,  # S-type
+        0b1100011,  # B-type
     }
-    
-    
     active_instr_word = 0
     for i in range(num_cycles):
-        current_highlights = {} # <-- ADDED: Dictionary for current cycle's highlights
-
+        current_highlights = {}
         stage_name = stage_map.get(fsm_stage_vals[i], "Unknown")
-        
         current_instr_in_reg = instr_vals[i]
         if current_instr_in_reg is not None:
             active_instr_word = current_instr_in_reg
-        
         word_to_lookup = active_instr_word
         if stage_name == "Fetch":
             newly_fetched_word = fetched_inst_vals[i]
@@ -340,32 +350,27 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
                 word_to_lookup = newly_fetched_word
         instr_info = instr_word_to_info_map.get(word_to_lookup, {"hex": "00000000", "asm": "nop"})
         
-        description = ""
+        description = "" # ... (rest of the description logic)
         if stage_name == "Fetch":
             pc = pc_vals[i]
             inst_val = fetched_inst_vals[i]
             description = f"Fetching instruction from PC 0x{pc:08x}\n"
             if inst_val is not None:
                 description += f"  - Instruction word fetched: 0x{inst_val:08x}"
-        
         elif stage_name == "Decode":
             inst = instr_vals[i]
             rs1 = rs1_addr_vals[i]
             rs2 = rs2_addr_vals[i]
-            rs1Data = rs1_data_vals[i] 
-            rs2Data = rs2_data_vals[i] 
+            rs1Data = rs1_data_vals[i]
+            rs2Data = rs2_data_vals[i]
             rd = decoded_rd_vals[i]
             op = opcode_vals[i]
             f3 = funct3_vals[i]
             f7 = funct7_vals[i]
             imm = imm_sext_vals[i]
-            
             current_highlights["read_rs1"] = rs1
-
-            # Only capture rs2 if the instruction's opcode is in our defined set
             if op in opcodes_that_use_rs2:
                 current_highlights["read_rs2"] = rs2
-            
             description = f"Decoding instruction: 0x{inst:08x}\n"
             if rs1 is not None: description += f"  - rs1: x{rs1}\n"
             if rs2 is not None: description += f"  - rs2: x{rs2}\n"
@@ -376,43 +381,33 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
             if imm is not None: description += f"  - imm_sext: {fmt_hex_dec(imm)}\n"
             if rs1Data is not None: description += f"  - rs1Data: {fmt_hex_dec(rs1Data)}\n"
             if rs2Data is not None: description += f"  - rs2Data: {fmt_hex_dec(rs2Data)}\n\n"
-            
             active_op = "None"
-            if i + 1 < num_cycles:  
+            if i + 1 < num_cycles:
                 for op_name, val_list in active_op_signals.items():
-                    if val_list[i + 1] == 1:  
+                    if val_list[i + 1] == 1:
                         active_op = op_name
                         break
             description += f"Active function control signal: {active_op}"
-
         elif stage_name == "Execute":
             op_a = operand_a_vals[i]
             op_b = operand_b_vals[i]
             res = alu_result_vals[i + 1] if i + 1 < num_cycles else None
-            
             active_op_name = "UPO"
             for op_name, val_list in active_op_signals.items():
                 if val_list[i] == 1:
                     active_op_name = op_name
                     break
-            
             description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
             if op_a is not None: description += f"  - Operand A: {fmt_hex_dec(op_a)}\n"
             if op_b is not None: description += f"  - Operand B: {fmt_hex_dec(op_b)}\n"
-            if res is not None:  description += (
-                f"  - ALU Result: {fmt_hex_dec(op_a)} {active_op_name} "
-                f"{fmt_hex_dec(op_b)} = {fmt_hex_dec(res)}"
-            )
-
+            if res is not None:
+                description += f"  - ALU Result: {fmt_hex_dec(res)}"
         elif stage_name == "Memory":
             description = "Memory stage (no operation for this core)."
-            
         elif stage_name == "Writeback":
             rd = rd_addr_vals[i]
-            res =wb_data_vals[i] 
-            
-            current_highlights["write_rd"] = rd # <-- ADDED: Capture rd
-            
+            res = wb_data_vals[i]
+            current_highlights["write_rd"] = rd
             if rd is not None and rd != 0 and res is not None:
                 description = f"Writing ALU result: {fmt_hex_dec(res)} to destination register(rd) x{rd}."
             else:
@@ -423,40 +418,38 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
             "stage": stage_name,
             "description": description,
         })
-        
-        reg_highlight_data.append(current_highlights) # <-- ADDED: Append highlight data for the cycle
-    
-    # --- HTML Generation ---
-    html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, reg_highlight_data, missing_signals_by_label) # <-- MODIFIED: Pass new data
+        reg_highlight_data.append(current_highlights)
+
+    # --- Step 5: Final Report and HTML Generation ---
+    print("\n✅ Animation data prepared. Generating HTML...")
+    html_content = create_html(num_cycles, multicycle_data_for_js, register_data_js, reg_highlight_data, missing_signals_by_label)
     
     with open(output_html, "w", encoding="utf-8") as f:
         f.write(html_content)
     
-    print(f"\n✅ Successfully generated '{output_html}'.")
-    webbrowser.open_new_tab(os.path.abspath(output_html))
-
+    # --- FINAL SUMMARY REPORT ---
+    print("\n" + "="*50)
+    print(" Generation Complete")
+    print("="*50)
+    print(f"📄 Output file:      {output_html}")
+    
     if any(missing_signals_by_label.values()):
         total_missing = sum(len(v) for v in missing_signals_by_label.values())
-        print("\n" + "="*50)
-        print(f"⚠️  Warning: {total_missing} required signal(s) were not found.")
-        print("   The generated HTML animation may be incomplete.")
-        print("   Please review the detailed log above for specifics.")
-        print("="*50)
-    
+        print(f"⚠️  Status:           Completed with {total_missing} missing signal(s).")
+        print("   (The animation may be incomplete. Review logs above.)")
+    elif config_path and not any(missing_signals_by_label.values()):
+         print(f"✅ Status:           Success! All signals from '{config_path}' were found.")
+    else:
+        print("✅ Status:           Success! All default signals were found.")
+
     if runtime_warnings:
-        print("\n" + "="*50)
-        print("⚠️  Additional runtime warnings:")
+        print("\n" + "-"*50)
+        print("   Additional runtime warnings:")
         for w in runtime_warnings:
-            print("   " + w.replace("\n", "\n   "))
-        print("="*50)
+            print("   - " + w.replace("\n", "\n     "))
+    print("="*50)
 
-    if config_used and not any(missing_signals_by_label.values()):
-        print("\n" + "="*50)
-        print(f"✅ Signals from '{config_used}' successfully found and mapped.")
-        print("="*50)
-
-    with open(output_html, "w", encoding="utf-8") as f:
-        f.write(html_content)
+    webbrowser.open_new_tab(os.path.abspath(output_html))
 
 # <-- REPLACED BLOCK: Entire create_html function is updated -->
 def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, missing_signals):
@@ -722,7 +715,10 @@ if __name__ == "__main__":
     parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
     parser.add_argument("-o", "--output", default="multicycle_animation.html", help="Name of the output HTML file.")
     parser.add_argument("-l", "--list-signals", action="store_true", help="Only list all signal names in the VCD file and exit.")
-    parser.add_argument("-c", "--config", help="configs/mycore.json")
+    parser.add_argument(
+        "-c", "--config",
+        help="Path to signal-map JSON/YAML file. If not given, you will be asked whether to use built-in defaults or provide a file."
+    )
     args = parser.parse_args()
 
     vcd_file = args.vcd_file
@@ -756,6 +752,25 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Error: Failed to load VCD file '{vcd_file}'. Reason: {e}")
         exit()
+
+    if not args.config:
+        user_in = input(
+            "\nNo config file specified.\n"
+            "Do you want to use the built-in default signals (type Y or Yes),\n"
+            "or type the path to a JSON/YAML config file (e.g. configs/mycore.json)?\n> "
+        ).strip()
+
+        if user_in.lower() in {"y", "yes"}:
+            args.config = None  # stick with default map
+            print("✅ Using built-in default signals.")
+        elif user_in:
+            args.config = user_in  # treat input as path
+            print(f"📂 Using custom config file: {args.config}")
+        else:
+            args.config = None
+            print("⚠️ Empty input, falling back to built-in defaults.")
+    
+
 
     # Call the main processing function with the loaded vcd object
     main(vcd, vcd_file, args.output, args.list_signals)
