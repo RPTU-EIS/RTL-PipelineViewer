@@ -9,10 +9,50 @@ from vcdvcd import VCDVCD
 import struct
 import difflib 
 
+
+
+try:
+    import yaml  # pip install pyyaml  (only if you want YAML)
+except Exception:
+    yaml = None
+
+def _is_yaml(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in {".yml", ".yaml"}
+
+def load_signal_map(config_path: str) -> dict:
+    """Load a JSON or YAML signal map and expand templates."""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        if _is_yaml(config_path):
+            if yaml is None:
+                raise RuntimeError("YAML config requested but PyYAML is not installed.")
+            data = yaml.safe_load(f)
+        else:
+            data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Signal map must be an object/dict at the top level.")
+    return expand_templates_in_signal_map(data)
+
+def expand_templates_in_signal_map(signal_map: dict) -> dict:
+    """Expand REG_TEMPLATE → REG_0..REG_31. Accept str or list for candidates."""
+    out = dict(signal_map)  # shallow copy
+    # Expand register template
+    if "REG_TEMPLATE" in out:
+        templ = out.pop("REG_TEMPLATE")
+        for i in range(32):
+            key = f"REG_{i}"
+            if isinstance(templ, list):
+                out[key] = [s.replace("{i}", str(i)) for s in templ]
+            else:
+                out[key] = [str(templ).replace("{i}", str(i))]
+    return out
+
 # --- Initial Setup ---
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
 md.detail = True
 missing_signals_by_label = {}
+runtime_warnings = []
 
 # --- New Function to list all signals ---
 def list_all_signals(vcd):
@@ -118,6 +158,41 @@ def extract_signal_at_cycles(signal_name, vcd, rising_edges, default_val=None, b
     return values
 
 
+def fmt_hex_dec(val, width=8):
+    """Format an integer as 0xXXXXXXXX (D) or '—' if None."""
+    if val is None:
+        return "—"
+    return f"0x{val:0{width}x} ({val})"
+
+def default_signal_map():
+    return {
+        "STAGE": ["MultiCycleRV32Icore.stage"],
+        "PC": ["MultiCycleRV32Icore.PC"],
+        "INSTRUCTION": ["MultiCycleRV32Icore.instReg"],
+        "RD_ADDR": ["MultiCycleRV32Icore.rdReg"],
+        "ALU_RESULT": ["MultiCycleRV32Icore.aluResult"],
+        "FETCHED_INST": ["MultiCycleRV32Icore.inst"],
+        "OPCODE": ["MultiCycleRV32Icore.opcode"],
+        "DECODED_RD": ["MultiCycleRV32Icore.rd"],
+        "FUNCT3": ["MultiCycleRV32Icore.funct3"],
+        "FUNCT7": ["MultiCycleRV32Icore.funct7"],
+        "IMM_SEXT": ["MultiCycleRV32Icore.immI_sext"],
+        "DECODED_RS1": ["MultiCycleRV32Icore.rs1"],
+        "DECODED_RS2": ["MultiCycleRV32Icore.rs2"],
+        "DECODED_RS1_DATA": ["MultiCycleRV32Icore.rs1Data"],
+        "DECODED_RS2_DATA": ["MultiCycleRV32Icore.rs2Data"],
+        "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
+        "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
+        "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
+        **{f"REG_{i}": [f"MultiCycleRV32Icore.regFile_{i}"] for i in range(32)},
+        "IS_ADD": ["MultiCycleRV32Icore.isADD"], "IS_ADDI": ["MultiCycleRV32Icore.isADDI"],
+        "IS_SUB": ["MultiCycleRV32Icore.isSUB"], "IS_SLL": ["MultiCycleRV32Icore.isSLL"],
+        "IS_SLT": ["MultiCycleRV32Icore.isSLT"], "IS_SLTU": ["MultiCycleRV32Icore.isSLTU"],
+        "IS_XOR": ["MultiCycleRV32Icore.isXOR"], "IS_SRL": ["MultiCycleRV32Icore.isSRL"],
+        "IS_SRA": ["MultiCycleRV32Icore.isSRA"], "IS_OR": ["MultiCycleRV32Icore.isOR"],
+        "IS_AND": ["MultiCycleRV32Icore.isAND"],
+    }
+
 
 # --- Main Script Logic ---
 def main(vcd, vcd_file_name, output_html, list_only=False): 
@@ -133,38 +208,20 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
     
 
     # --- Signal Definitions for Multi-Cycle Core ---
-    core_signals_raw = {
-        # Core State
-        "FSM_STAGE": ["MultiCycleRV32Icore.stage"],
-        "PC": ["MultiCycleRV32Icore.PC"],
-        "INSTRUCTION": ["MultiCycleRV32Icore.instReg"],
-        "RD_ADDR": ["MultiCycleRV32Icore.rdReg"],
-        "ALU_RESULT": ["MultiCycleRV32Icore.aluResult"],
-        # Fetch Stage
-        "FETCHED_INST": ["MultiCycleRV32Icore.inst"],
-        # Decode Stage
-        "OPCODE": ["MultiCycleRV32Icore.opcode"],
-        "DECODED_RD": ["MultiCycleRV32Icore.rd"],
-        "FUNCT3": ["MultiCycleRV32Icore.funct3"],
-        "FUNCT7": ["MultiCycleRV32Icore.funct7"],
-        "IMM_SEXT": ["MultiCycleRV32Icore.immI_sext"],
-        "DECODED_RS1": ["MultiCycleRV32Icore.rs1"],
-        "DECODED_RS2": ["MultiCycleRV32Icore.rs2"],
-        "DECODED_RS1_DATA": ["MultiCycleRV32Icore.rs1Data"],
-        "DECODED_RS2_DATA": ["MultiCycleRV32Icore.rs2Data"],
-        "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
-        "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
-        "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
-        **{f"REG_{i}": [f"MultiCycleRV32Icore.regFile_{i}"] for i in range(32)},
+    config_used = None
+    if getattr(args, "config", None):
+        try:
+            print(f"Loading signal map from: {args.config}")
+            core_signals_raw = load_signal_map(args.config)
+            config_used = args.config   # mark success
+        except Exception as e:
+            msg = f"  Failed to load config '{args.config}': {e}\n  Falling back to built-in defaults."
+            print(msg)
+            runtime_warnings.append(msg)
+            core_signals_raw = default_signal_map()
+    else:
+        core_signals_raw = default_signal_map()
 
-        # UPO Function Control Signals
-        "IS_ADD": ["MultiCycleRV32Icore.isADD"], "IS_ADDI": ["MultiCycleRV32Icore.isADDI"],
-        "IS_SUB": ["MultiCycleRV32Icore.isSUB"], "IS_SLL": ["MultiCycleRV32Icore.isSLL"],
-        "IS_SLT": ["MultiCycleRV32Icore.isSLT"], "IS_SLTU": ["MultiCycleRV32Icore.isSLTU"],
-        "IS_XOR": ["MultiCycleRV32Icore.isXOR"], "IS_SRL": ["MultiCycleRV32Icore.isSRL"],
-        "IS_SRA": ["MultiCycleRV32Icore.isSRA"], "IS_OR": ["MultiCycleRV32Icore.isOR"],
-        "IS_AND": ["MultiCycleRV32Icore.isAND"],
-    }
     core_signals = resolve_signals_with_log(core_signals_raw, vcd, "Core State")
     
     # --- Clock and Cycle Detection ---
@@ -188,7 +245,7 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
     
     
     # --- Extract Data ---
-    fsm_stage_vals = extract_signal_at_cycles(core_signals["FSM_STAGE"], vcd, rising_edges, base=2)
+    fsm_stage_vals = extract_signal_at_cycles(core_signals["STAGE"], vcd, rising_edges, base=2)
     pc_vals = extract_signal_at_cycles(core_signals["PC"], vcd, rising_edges, base=2)
     instr_vals = extract_signal_at_cycles(core_signals["INSTRUCTION"], vcd, rising_edges, base=2)
     rd_addr_vals = extract_signal_at_cycles(core_signals["RD_ADDR"], vcd, rising_edges, base=2)
@@ -249,7 +306,7 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
                 val = val_list[0] if val_list else 0
             else:
                 val = 0
-            cycle_regs[f"x{j}"] = f"0x{val:08x}"
+            cycle_regs[f"x{j}"] = fmt_hex_dec(val)
         register_data_js.append(cycle_regs)
     print("✅ Register data extracted.")
     
@@ -316,9 +373,9 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
             if op is not None: description += f"  - Opcode: 0b{op:07b}\n"
             if f3 is not None: description += f"  - funct3: 0b{f3:03b}\n"
             if f7 is not None: description += f"  - funct7: 0b{f7:07b}\n"
-            if imm is not None: description += f"  - imm_sext: 0x{imm:x}\n"
-            if rs1Data is not None: description += f"  - rs1Data: 0x{rs1Data:08x}\n"
-            if rs2Data is not None: description += f"  - rs2Data: 0x{rs2Data:08x}\n\n"
+            if imm is not None: description += f"  - imm_sext: {fmt_hex_dec(imm)}\n"
+            if rs1Data is not None: description += f"  - rs1Data: {fmt_hex_dec(rs1Data)}\n"
+            if rs2Data is not None: description += f"  - rs2Data: {fmt_hex_dec(rs2Data)}\n\n"
             
             active_op = "None"
             if i + 1 < num_cycles:  
@@ -340,9 +397,12 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
                     break
             
             description = f"Executing in ALU.\n  - UPO: {active_op_name}\n"
-            if op_a is not None: description += f"  - Operand A: 0x{op_a:x}\n"
-            if op_b is not None: description += f"  - Operand B: 0x{op_b:x}\n"
-            if res is not None:  description += f"  - ALU Result: {op_a:x} {active_op_name} {op_b:x} = {res:x}"
+            if op_a is not None: description += f"  - Operand A: {fmt_hex_dec(op_a)}\n"
+            if op_b is not None: description += f"  - Operand B: {fmt_hex_dec(op_b)}\n"
+            if res is not None:  description += (
+                f"  - ALU Result: {fmt_hex_dec(op_a)} {active_op_name} "
+                f"{fmt_hex_dec(op_b)} = {fmt_hex_dec(res)}"
+            )
 
         elif stage_name == "Memory":
             description = "Memory stage (no operation for this core)."
@@ -354,7 +414,7 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
             current_highlights["write_rd"] = rd # <-- ADDED: Capture rd
             
             if rd is not None and rd != 0 and res is not None:
-                description = f"Writing ALU result: {res:x} to destination register(rd) x{rd}."
+                description = f"Writing ALU result: {fmt_hex_dec(res)} to destination register(rd) x{rd}."
             else:
                 description = "Writeback stage (no write to x0)."
 
@@ -383,6 +443,17 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
         print("   Please review the detailed log above for specifics.")
         print("="*50)
     
+    if runtime_warnings:
+        print("\n" + "="*50)
+        print("⚠️  Additional runtime warnings:")
+        for w in runtime_warnings:
+            print("   " + w.replace("\n", "\n   "))
+        print("="*50)
+
+    if config_used and not any(missing_signals_by_label.values()):
+        print("\n" + "="*50)
+        print(f"✅ Signals from '{config_used}' successfully found and mapped.")
+        print("="*50)
 
     with open(output_html, "w", encoding="utf-8") as f:
         f.write(html_content)
@@ -438,7 +509,7 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
             .grid-header, .grid-cell {{ padding: 6px; border: 1px solid #eee; text-align: center; font-size: 14px; }}
             .grid-header {{ background-color: #e9ecef; font-weight: bold; }}
             .register-name-cell {{ font-family: monospace; text-align: left !important; padding-left: 10px !important; }}
-            .register-value-cell {{ font-family: monospace; }}
+            .register-value-cell {{ font-family: monospace; white-space: nowrap; }}
             .register-value-cell.changed {{ background-color: #ffd700; transition: background-color 0.1s ease-in; }}
             .missing-signals-box {{ background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 6px; margin-bottom: 20px; }}
             .stage-display-container {{                display: flex;
@@ -562,7 +633,12 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
                     const currentVal = currentRegs[`x${{i}}`] || '0x00000000';
                     const prevVal = prevRegs[`x${{i}}`] || '0x00000000';
                     valCell.textContent = currentVal;
-                    valCell.classList.toggle('changed', currentVal !== prevVal);
+                    valCell.textContent = currentVal;
+                    if (currentCycle > 0) {{
+                        valCell.classList.toggle('changed', currentVal !== prevVal);
+                    }} else {{
+                        valCell.classList.remove('changed');
+                    }}
 
                     const readCell = document.getElementById(`reg-read-${{i}}`);
                     const writeCell = document.getElementById(`reg-write-${{i}}`);
@@ -583,7 +659,8 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
 
             function populateStaticGrid() {{
                 const registerTable = document.getElementById('registerTable');
-                registerTable.innerHTML = '<div class="grid-header">Register</div><div class="grid-header">Value</div><div class="grid-header">Read (EX)</div><div class="grid-header">Write (WB)</div>';
+                registerTable.innerHTML = '<div class="grid-header">Register</div><div class="grid-header">Value (hex / dec)</div><div class="grid-header">Read (EX)</div><div class="grid-header">Write (WB)</div>';
+
                 for (let i = 0; i < 32; i++) {{
                     const nameCell = document.createElement('div');
                     nameCell.className = 'grid-cell register-name-cell';
@@ -645,6 +722,7 @@ if __name__ == "__main__":
     parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
     parser.add_argument("-o", "--output", default="multicycle_animation.html", help="Name of the output HTML file.")
     parser.add_argument("-l", "--list-signals", action="store_true", help="Only list all signal names in the VCD file and exit.")
+    parser.add_argument("-c", "--config", help="configs/mycore.json")
     args = parser.parse_args()
 
     vcd_file = args.vcd_file
