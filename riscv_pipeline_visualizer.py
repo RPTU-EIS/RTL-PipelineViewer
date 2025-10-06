@@ -8,43 +8,100 @@ import re
 import json 
 import webbrowser
 import sys
+import argparse 
 
 # Initialize Capstone for RISC-V 32-bit disassembly
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
 md.detail = True
 missing_signals_by_label = {}
 
+
+
+#  New functions for loading config files ---
+def load_signal_map(config_path: str) -> dict:
+    """Load a JSON signal map and expand templates."""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Signal map must be an object/dict at the top level.")
+    return expand_templates_in_signal_map(data)
+
+def expand_templates_in_signal_map(signal_map: dict) -> dict:
+    """Expand REG_TEMPLATE → REG_0..REG_31."""
+    out = dict(signal_map)  # shallow copy
+    if "REG_TEMPLATE" in out:
+        templ = out.pop("REG_TEMPLATE")
+        for i in range(32):
+            key = f"x{i}" # Use 'x0', 'x1', etc. as the key
+            if isinstance(templ, list):
+                out[key] = [s.replace("{i}", str(i)) for s in templ]
+            else: # Handle if template is a single string
+                out[key] = [str(templ).replace("{i}", str(i))]
+    return out
+
+
 # --- Configuration ---
 # VCD_FILE = "dump5.vcd" / Now we introduce the file
 CLOCK_SIGNAL = None 
 
-if len(sys.argv) >= 2:
-    VCD_FILE = sys.argv[1]
-    if not VCD_FILE.lower().endswith(".vcd"):
-        if os.path.exists(VCD_FILE + ".vcd"):
-            VCD_FILE = VCD_FILE + ".vcd"
-else:
+parser = argparse.ArgumentParser(description="Generate an HTML animation for a pipelined RISC-V processor from a VCD file.")
+parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
+parser.add_argument("-c", "--config", help="Path to signal-map JSON/YAML file. If not given, you will be asked whether to use built-in defaults or provide a file.")
+args = parser.parse_args()
+
+config_status_ok = None
+config_status_msg = ""
+
+VCD_FILE = args.vcd_file
+
+if not VCD_FILE:
     while True:
         VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
-        if not VCD_FILE.lower().endswith(".vcd"):
-            if os.path.exists(VCD_FILE + ".vcd"):
-                VCD_FILE = VCD_FILE + ".vcd"
+        if not VCD_FILE.lower().endswith(".vcd") and os.path.exists(VCD_FILE + ".vcd"):
+            VCD_FILE = VCD_FILE + ".vcd"
         if os.path.exists(VCD_FILE):
             print(f"✅ Found VCD file: {VCD_FILE}")
             break
         else:
             print(f"❌ File '{VCD_FILE}' not found. Please try again.\n")
 
-# --- Load VCD ---
-print(f"Loading VCD file: {VCD_FILE}")
+
+if not args.config:
+    user_in = input(
+        "\nNo config file specified.\n"
+        "Do you want to use the built-in default signals (type Y or Yes),\n"
+        "or type the path to a JSON/YAML config file (e.g. configs/mycore.json)?\n> "
+    ).strip()
+
+    if user_in.lower() in {"y", "yes"}:
+        args.config = None  # Signal to use the default map
+        print("✅ Using built-in default signals.")
+    elif user_in:
+        args.config = user_in  # Treat user input as the path
+        print(f"📂 Using custom config file: {args.config}")
+    else:
+        args.config = None
+        print("⚠️ Empty input, falling back to built-in defaults.")
+
 try:
     vcd = VCDVCD(VCD_FILE, store_tvs=True)
 except FileNotFoundError:
-    print(f"❌ Error: VCD file '{VCD_FILE}' not found. Please ensure it's in the same directory.")
+    print(f"❌ Error: VCD file '{VCD_FILE}' not found. Please check the file is in the same directory.")
     exit()
 
-print(f"\nFirst: Resolve signal names (with priority fallbacks). Then: list all detected signals in the {VCD_FILE} (VCD file).\n")
 
+# --- START: New Organized Terminal Output ---
+print("\n" + "="*50)
+print(" VCD to Pipelined HTML Animation Generator")
+print("="*50)
+print(f"📂 VCD File:         {VCD_FILE}")
+print(f"📊 Total Signals:    {len(vcd.signals)}")
+
+print("\n" + "-"*50)
+print(" Step 1: Mapping Signals...")
+print("-" * 50)
 
 
 # --- Utility to resolve signals from multiple fallback paths ---
@@ -93,137 +150,120 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
             missing_signals_by_label[label].append(key)
     return resolved
 
+def get_default_signal_maps():
+    """Returns the hardcoded default signal maps."""
+    stage_signals_raw = {
+        "IF": ["HazardDetectionRV32I.core.IFBarrier.io_pc_out", "PipelinedRV32I.core.ifBarrier.io_pc_out"],
+        "ID": ["HazardDetectionRV32I.core.IDBarrier.pcReg", "PipelinedRV32I.core.idBarrier.pcReg"],
+        "EX": ["HazardDetectionRV32I.core.EXBarrier.pcReg", "PipelinedRV32I.core.exBarrier.pcReg"],
+        "MEM": ["HazardDetectionRV32I.core.MEMBarrier.pcReg", "PipelinedRV32I.core.memBarrier.pcReg"],
+        "WB": ["HazardDetectionRV32I.core.WBBarrier.pcReg", "PipelinedRV32I.core.wbBarrier.pcReg"]
+    }
+    instruction_signals_raw = {
+        "IF": ["HazardDetectionRV32I.core.IFBarrier.io_inst_out", "PipelinedRV32I.core.ifBarrier.io_inst_out"],
+        "ID": ["HazardDetectionRV32I.core.IDBarrier.instReg", "PipelinedRV32I.core.idBarrier.instReg"],
+        "EX": ["HazardDetectionRV32I.core.EXBarrier.instReg", "PipelinedRV32I.core.exBarrier.instReg"],
+        "MEM": ["HazardDetectionRV32I.core.MEMBarrier.instReg", "PipelinedRV32I.core.memBarrier.instReg"],
+        "WB": ["HazardDetectionRV32I.core.WBBarrier.instReg", "PipelinedRV32I.core.wbBarrier.instReg"]
+    }
+    ex_signals_raw = {
+        "operandA": ["HazardDetectionRV32I.core.EX.io_operandA", "PipelinedRV32I.core.exStage.io_data1_in"],
+        "operandB": ["HazardDetectionRV32I.core.EX.io_operandB", "PipelinedRV32I.core.exStage.operandB"],
+        "aluResult": ["HazardDetectionRV32I.core.EX.io_aluResult", "PipelinedRV32I.core.exStage.aluResult"],
+        "UOP": ["HazardDetectionRV32I.core.EX.io_uop", "PipelinedRV32I.core.exStage.io_upo_in"]
+    }
+    wb_signals_raw = {
+        "rd": ["HazardDetectionRV32I.core.WB.io_rd", "PipelinedRV32I.core.WB.io_rd"],
+        "wb_data": ["HazardDetectionRV32I.core.WB.io_check_res", "PipelinedRV32I.core.io_check_res"]
+    }
+    hazard_signal_candidates = {
+        "rs1_addr": ["HazardDetectionRV32I.core.IDBarrier.io_outRS1", "PipelinedRV32I.core.idBarrier.rs1"],
+        "rs2_addr": ["HazardDetectionRV32I.core.IDBarrier.io_outRS2", "PipelinedRV32I.core.idBarrier.rs2"],
+        "opcode": ["HazardDetectionRV32I.core.ID.opcode", "PipelinedRV32I.core.idStage.opcode"],
+        "rd_mem_addr": ["HazardDetectionRV32I.core.EXBarrier.io_outRD"],
+        "rd_wb_addr": ["HazardDetectionRV32I.core.MEMBarrier.io_outRD"],
+        "forwardA": ["HazardDetectionRV32I.core.FU.io_forwardA"],
+        "forwardB": ["HazardDetectionRV32I.core.FU.io_forwardB"]
+    }
+    register_signals_raw = {f"x{i}": [f"HazardDetectionRV32I.core.regFile.regFile_{i}", f"PipelinedRV32I.core.idStage.rf.regFile_{i}"] for i in range(32)}
+
+    return {
+        "stage": stage_signals_raw,
+        "instruction": instruction_signals_raw,
+        "ex": ex_signals_raw,
+        "wb": wb_signals_raw,
+        "hazard": hazard_signal_candidates,
+        "register": register_signals_raw
+    }
+
+if args.config:
+    try:
+        print(f"\nAttempting to load signal map from: {args.config}")
+        all_signals_raw = load_signal_map(args.config)
+        print(f"✅ Successfully loaded '{args.config}'")
+        config_status_ok = True
+        config_status_msg = f"Loaded signal map from '{args.config}'."
+
+        # Organize signals from the loaded file
+        stage_signals_raw = {k.replace("STAGE_", ""): v for k, v in all_signals_raw.items() if k.startswith("STAGE_")}
+        instruction_signals_raw = {k.replace("INSTR_", ""): v for k, v in all_signals_raw.items() if k.startswith("INSTR_")}
+        def to_camel(name: str) -> str:
+            parts = name.lower().split('_')
+            return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+
+        ex_signals_raw = {to_camel(k.replace("EX_", "")): v for k, v in all_signals_raw.items() if k.startswith("EX_")}
+        wb_signals_raw = {
+            k.replace("WB_", "").lower(): v
+            for k, v in all_signals_raw.items()
+            if k.startswith("WB_")
+        }
+        hazard_signals_raw = {}
+        for k, v in all_signals_raw.items():
+            if not k.startswith("HAZARD_"):
+                continue
+            name = k.replace("HAZARD_", "")
+            if "FORWARD" in name:
+                hazard_signals_raw[to_camel(name)] = v
+            else:
+                hazard_signals_raw[name.lower()] = v
+        register_signals_raw = {k: v for k, v in all_signals_raw.items() if k.startswith("x")}
+
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to load or parse config '{args.config}': {e}. Falling back to defaults.")
+        config_status_ok = False
+        config_status_msg = f"Failed to load or parse config '{args.config}': {e}. Falling back to built-in defaults."
+
+        # Fallback to defaults if the specified file has an error
+        defaults = get_default_signal_maps()
+        stage_signals_raw = defaults["stage"]
+        instruction_signals_raw = defaults["instruction"]
+        ex_signals_raw = defaults["ex"]
+        wb_signals_raw = defaults["wb"]
+        hazard_signals_raw = defaults["hazard"]
+        register_signals_raw = defaults["register"]
+else:
+    # This block runs if the user chose the built-in defaults
+    print("\nUsing built-in default signal map.")
+    config_status_ok = True
+    config_status_msg = "Using built-in default signal map."
+    defaults = get_default_signal_maps()
+    stage_signals_raw = defaults["stage"]
+    instruction_signals_raw = defaults["instruction"]
+    ex_signals_raw = defaults["ex"]
+    wb_signals_raw = defaults["wb"]
+    hazard_signals_raw = defaults["hazard"]
+    register_signals_raw = defaults["register"]
 
 
-
-stage_signals_raw = {
-    "IF": [
-        "HazardDetectionRV32I.core.IFBarrier.io_pc_out",
-        "PipelinedRV32I.core.ifBarrier.io_pc_out"
-    ],
-    "ID": [
-        "HazardDetectionRV32I.core.IDBarrier.pcReg",
-        "PipelinedRV32I.core.idBarrier.pcReg"
-    ],
-    "EX": [
-        "HazardDetectionRV32I.core.EXBarrier.pcReg",
-        "PipelinedRV32I.core.exBarrier.pcReg"
-    ],
-    "MEM": [
-        "HazardDetectionRV32I.core.MEMBarrier.pcReg",
-        "PipelinedRV32I.core.memBarrier.pcReg"
-    ],
-    "WB": [
-        "HazardDetectionRV32I.core.WBBarrier.pcReg",
-        "PipelinedRV32I.core.wbBarrier.pcReg"
-    ]
-}
-
+# Now, resolve the signals using the maps we either loaded or fell back to
 stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage", vcd_filename=VCD_FILE)
-
-instruction_signals_raw = {
-    "IF": [
-        "HazardDetectionRV32I.core.IFBarrier.io_inst_out",
-        "PipelinedRV32I.core.ifBarrier.io_inst_out"
-    ],
-    "ID": [
-        "HazardDetectionRV32I.core.IDBarrier.instReg",
-        "PipelinedRV32I.core.idBarrier.instReg"
-    ],
-    "EX": [
-        "HazardDetectionRV32I.core.EXBarrier.instReg",
-        "PipelinedRV32I.core.exBarrier.instReg"
-    ],
-    "MEM": [
-        "HazardDetectionRV32I.core.MEMBarrier.instReg",
-        "PipelinedRV32I.core.memBarrier.instReg"
-    ],
-    "WB": [
-        "HazardDetectionRV32I.core.WBBarrier.instReg",
-        "PipelinedRV32I.core.wbBarrier.instReg"
-    ]
-}
 instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction", vcd_filename=VCD_FILE)
-
-ex_signals_raw = {
-    "operandA": [
-        "HazardDetectionRV32I.core.EX.io_operandA",
-        "PipelinedRV32I.core.exStage.io_data1_in"
-    ],
-    "operandB": [
-        "HazardDetectionRV32I.core.EX.io_operandB",
-        "PipelinedRV32I.core.exStage.operandB"
-    ],
-    "aluResult": [
-        "HazardDetectionRV32I.core.EX.io_aluResult",
-        "PipelinedRV32I.core.exStage.aluResult"
-    ],
-    "UOP": [
-        "HazardDetectionRV32I.core.EX.io_uop",
-        "PipelinedRV32I.core.exStage.io_upo_in"
-    ]
-}
 ex_signals = resolve_signals_with_log(ex_signals_raw, vcd, "EX", vcd_filename=VCD_FILE)
-
-wb_signals_raw = {
-    "rd": [
-        "HazardDetectionRV32I.core.WB.io_rd",
-        "PipelinedRV32I.core.WB.io_rd"
-    ],
-    "wb_data": [
-        "HazardDetectionRV32I.core.WB.io_check_res",
-        "PipelinedRV32I.core.io_check_res"
-    ]
-}
 wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VCD_FILE)
-
-# --- Signals for Hazard Detection and Forwarding Unit ---
-hazard_signal_candidates = {
-    "rs1_addr": [
-        "HazardDetectionRV32I.core.IDBarrier.io_outRS1",
-        "PipelinedRV32I.core.IDBarrier.io_outRS1",
-        "PipelinedRV32I.core.idBarrier.rs1"
-    ],
-    "rs2_addr": [
-        "HazardDetectionRV32I.core.IDBarrier.io_outRS2",
-        "PipelinedRV32I.core.IDBarrier.io_outRS2",
-        "PipelinedRV32I.core.idBarrier.rs2"
-    ],
-    "opcode": [
-        "HazardDetectionRV32I.core.ID.opcode",
-        "PipelinedRV32I.core.idStage.opcode"
-    ],
-    "rd_mem_addr": [
-        "HazardDetectionRV32I.core.EXBarrier.io_outRD",
-        "PipelinedRV32I.core.EXBarrier.io_outRD"
-    ],
-    "rd_wb_addr": [
-        "HazardDetectionRV32I.core.MEMBarrier.io_outRD",
-        "PipelinedRV32I.core.MEMBarrier.io_outRD"
-    ],
-    "forwardA": [
-        "HazardDetectionRV32I.core.FU.io_forwardA",
-        "PipelinedRV32I.core.FU.io_forwardA"
-    ],
-    "forwardB": [
-        "HazardDetectionRV32I.core.FU.io_forwardB",
-        "PipelinedRV32I.core.FU.io_forwardB"
-    ]
-}
-
-
-hazard_signals = resolve_signals_with_log(hazard_signal_candidates, vcd, label="Hazard", vcd_filename=VCD_FILE)
-
-
-register_signals_raw = {
-    f"x{i}": [
-        f"HazardDetectionRV32I.core.regFile.regFile_{i}",
-        f"PipelinedRV32I.core.idStage.rf.regFile_{i}"
-    ]
-    for i in range(32)
-}
-
+hazard_signals = resolve_signals_with_log(hazard_signals_raw, vcd, "Hazard", vcd_filename=VCD_FILE)
 register_signals = resolve_signals_with_log(register_signals_raw, vcd, "Register", vcd_filename=VCD_FILE)
+
+
 
 
 output_html = "pipeline_animation.html" # Output filename for the animation HTML
@@ -554,8 +594,9 @@ for cycle_idx in range(num_cycles):
                     tooltip += f"\n--- ALU Op ---\n{op_a} {operator_plain} {op_b} = {res} (unsigned)"
                     tooltip += f"\n{op_a} {operator_plain} {op_b} = {signed_result} (signed)"
             elif stage == "WB":
-                wb_data = delayed_wb_values_by_cycle[cycle_idx].get("wb_data")
-                wb_rd = delayed_wb_values_by_cycle[cycle_idx].get("rd")
+                wb_slot = delayed_wb_values_by_cycle[cycle_idx]
+                wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
+                wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
 
                 if wb_data is not None and wb_rd is not None and wb_rd != 0:
                     try:
@@ -634,12 +675,21 @@ if all_missing_keys:
 
 
 
+config_status_html = f"""
+<div id="config-status-box" class="missing-signals-box" 
+     style="border-color:{'#2e7d32' if config_status_ok else '#ffb300'}; 
+            background-color:{'#e8f5e9' if config_status_ok else '#fff8e1'};
+            position: relative;">
+    <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
+    <strong>{'✅' if config_status_ok else '⚠️'} Config:</strong>
+    {config_status_msg}
+</div>
+"""
+
+
 
 # --- HTML Generation ---
 color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
-
-
-
 
 
 html_content = """
@@ -699,13 +749,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     background-color: yellow !important;
     border: 2px solid orange !important;
 }}
-/* --- MODIFICATION: Styles for dataflow arrows --- */
 #arrow-svg {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }}
 .arrow {{ stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead); }}
 @keyframes dash {{ to {{ stroke-dashoffset: -10; }} }}
 
 
-/* --- Warning Box Styles --- */
 .missing-signals-box {{
     max-width: 900px;
     margin: 10px auto 25px auto; /* Center the box and add space */
@@ -754,6 +802,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     border-radius: 4px;
     font-size: 13px;
 }}
+
 .signal-category-block {{
     break-inside: avoid;
     -webkit-column-break-inside: avoid; /* For older browser compatibility */
@@ -782,6 +831,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 <h2>Pipeline Animation with Register State</h2>
 
 <div style="font-size: 14px; margin-bottom: 10px;">
+{config_status_html}
 {missing_signals_html}
 </div>
 </div>
@@ -1194,6 +1244,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map),
     reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
     missing_signals_html=missing_signals_html,
+    config_status_html=config_status_html,
 )
 
 # --- Write the final HTML file ---
@@ -1203,3 +1254,38 @@ with open(output_html, "w",  encoding="utf-8") as f:
 
 print(f"✅ Successfully generated '{output_html}'. Open this file in your web browser to view the animation.")
 #webbrowser.open_new_tab(output_html)
+
+
+all_missing_keys = [key for keys in missing_signals_by_label.values() for key in keys]
+
+print("\n" + "="*50)
+print(" VCD Signal Analysis Summary")
+print("="*50)
+
+if not all_missing_keys:
+    print("✅ Success! All required signals were found in the VCD file.")
+    print("The generated HTML animation should be fully functional.")
+else:
+    print(f"⚠️  Warning: A total of {len(all_missing_keys)} required signal(s) were not found.")
+    print("The generated HTML animation may be incomplete or behave unexpectedly.")
+    print("Please review the detailed log above for specifics on missing signals like:")
+    # Print up to 5 examples of missing signals
+    for key in all_missing_keys[:5]:
+        print(f"    - '{key}'")
+    if len(all_missing_keys) > 5:
+        print("    - ... and more.")
+    print("\nCheck your hardware design's signal names to resolve these issues.")
+
+print("="*50 + "\n")
+
+print("\n" + "="*50)
+print(" Configuration Result")
+print("="*50)
+if config_status_ok is True:
+    print(f"✅ {config_status_msg}")
+elif config_status_ok is False:
+    print(f"⚠️  {config_status_msg}")
+else:
+    print("ℹ️ No configuration status recorded.")
+print("="*50 + "\n")
+
