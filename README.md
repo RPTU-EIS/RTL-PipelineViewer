@@ -15,7 +15,7 @@ This project provides Python scripts to generate interactive HTML visualizations
 * **Register State:** Tracks and displays the state of the register file at each cycle, highlighting changes.
 * **Hazard Visualization:** Clearly shows data forwarding paths and pipeline stalls.
 
-## ## Requirements
+## Requirements
 
 -   Python 3.x
 -   `vcdvcd`, `capstone`, `pandas`
