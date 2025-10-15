@@ -164,34 +164,6 @@ def fmt_hex_dec(val, width=8):
         return "—"
     return f"0x{val:0{width}x} ({val})"
 
-def default_signal_map():
-    return {
-        "STAGE": ["MultiCycleRV32Icore.stage"],
-        "PC": ["MultiCycleRV32Icore.PC"],
-        "INSTRUCTION": ["MultiCycleRV32Icore.instReg"],
-        "RD_ADDR": ["MultiCycleRV32Icore.rdReg"],
-        "ALU_RESULT": ["MultiCycleRV32Icore.aluResult"],
-        "FETCHED_INST": ["MultiCycleRV32Icore.inst"],
-        "OPCODE": ["MultiCycleRV32Icore.opcode"],
-        "DECODED_RD": ["MultiCycleRV32Icore.rd"],
-        "FUNCT3": ["MultiCycleRV32Icore.funct3"],
-        "FUNCT7": ["MultiCycleRV32Icore.funct7"],
-        "IMM_SEXT": ["MultiCycleRV32Icore.immI_sext"],
-        "DECODED_RS1": ["MultiCycleRV32Icore.rs1"],
-        "DECODED_RS2": ["MultiCycleRV32Icore.rs2"],
-        "DECODED_RS1_DATA": ["MultiCycleRV32Icore.rs1Data"],
-        "DECODED_RS2_DATA": ["MultiCycleRV32Icore.rs2Data"],
-        "OPERAND_A": ["MultiCycleRV32Icore.operandA"],
-        "OPERAND_B": ["MultiCycleRV32Icore.operandB"],
-        "WB_DATA": ["MultiCycleRV32Icore.io_check_res"],
-        **{f"REG_{i}": [f"MultiCycleRV32Icore.regFile_{i}"] for i in range(32)},
-        "IS_ADD": ["MultiCycleRV32Icore.isADD"], "IS_ADDI": ["MultiCycleRV32Icore.isADDI"],
-        "IS_SUB": ["MultiCycleRV32Icore.isSUB"], "IS_SLL": ["MultiCycleRV32Icore.isSLL"],
-        "IS_SLT": ["MultiCycleRV32Icore.isSLT"], "IS_SLTU": ["MultiCycleRV32Icore.isSLTU"],
-        "IS_XOR": ["MultiCycleRV32Icore.isXOR"], "IS_SRL": ["MultiCycleRV32Icore.isSRL"],
-        "IS_SRA": ["MultiCycleRV32Icore.isSRA"], "IS_OR": ["MultiCycleRV32Icore.isOR"],
-        "IS_AND": ["MultiCycleRV32Icore.isAND"],
-    }
 
 
 
@@ -219,20 +191,21 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
     print(" Step 1: Mapping Signals...")
     print("-" * 50)
     
-    config_path = getattr(args, "config", None)
-    if config_path:
-        try:
-            print(f"Attempting to load signal map from: {config_path}")
-            core_signals_raw = load_signal_map(config_path)
-            print(f"✅ Successfully loaded '{config_path}'")
-        except Exception as e:
-            msg = f"Failed to load config '{config_path}': {e}\nFalling back to built-in defaults."
-            print(f"  ⚠️ {msg}")
-            runtime_warnings.append(msg)
-            core_signals_raw = default_signal_map()
-    else:
-        print("Using built-in default signal map.")
-        core_signals_raw = default_signal_map()
+
+    # --- Hardcoded Config Path ---
+    CONFIG_FILE = "configs/multicycle.json"  # <-- The required config file
+
+    # --- Load Signal Map ---
+    try:
+        print(f"Attempting to load signal map from: {CONFIG_FILE}")
+        core_signals_raw = load_signal_map(CONFIG_FILE)
+        print(f"✅ Successfully loaded '{CONFIG_FILE}'")
+    except Exception as e:
+        print(f"❌ Error: Failed to load the required config file '{CONFIG_FILE}'.")
+        print(f"   Reason: {e}")
+        print("   Please ensure the file exists and is a valid JSON/YAML.")
+        exit(1) # Stop execution if the config file fails to load
+    
 
     core_signals = resolve_signals_with_log(core_signals_raw, vcd, "Core Signals")
     
@@ -437,10 +410,8 @@ def main(vcd, vcd_file_name, output_html, list_only=False):
         total_missing = sum(len(v) for v in missing_signals_by_label.values())
         print(f"⚠️  Status:           Completed with {total_missing} missing signal(s).")
         print("   (The animation may be incomplete. Review logs above.)")
-    elif config_path and not any(missing_signals_by_label.values()):
-         print(f"✅ Status:           Success! All signals from '{config_path}' were found.")
     else:
-        print("✅ Status:           Success! All default signals were found.")
+        print(f"✅ Status:           Success! All signals from '{CONFIG_FILE}' were found.")
 
     if runtime_warnings:
         print("\n" + "-"*50)
@@ -697,6 +668,17 @@ def create_html(num_cycles, multicycle_data, register_data, reg_highlight_data, 
                 document.getElementById('nextBtn').addEventListener('click', nextCycle);
                 document.getElementById('restartBtn').addEventListener('click', () => {{ stopAnimation(); currentCycle = 0; updateDisplay(); }});
                 document.getElementById('playPauseBtn').addEventListener('click', () => animationInterval ? stopAnimation() : startAnimation());
+                
+                // --- START: CORRECTED KEYBOARD LISTENER ---
+                document.addEventListener('keydown', (e) => {{
+                    if (e.key === 'ArrowRight') {{
+                        nextCycle();
+                    }}
+                    if (e.key === 'ArrowLeft') {{
+                        prevCycle();
+                    }}
+                }}); // This now has the correct double closing braces '}}'
+                // --- END: CORRECTED KEYBOARD LISTENER ---
             }});
         </script>
     </body>
@@ -715,10 +697,7 @@ if __name__ == "__main__":
     parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
     parser.add_argument("-o", "--output", default="multicycle_animation.html", help="Name of the output HTML file.")
     parser.add_argument("-l", "--list-signals", action="store_true", help="Only list all signal names in the VCD file and exit.")
-    parser.add_argument(
-        "-c", "--config",
-        help="Path to signal-map JSON/YAML file. If not given, you will be asked whether to use built-in defaults or provide a file."
-    )
+    
     args = parser.parse_args()
 
     vcd_file = args.vcd_file
@@ -753,22 +732,7 @@ if __name__ == "__main__":
         print(f"❌ Error: Failed to load VCD file '{vcd_file}'. Reason: {e}")
         exit()
 
-    if not args.config:
-        user_in = input(
-            "\nNo config file specified.\n"
-            "Do you want to use the built-in default signals (type Y or Yes),\n"
-            "or type the path to a JSON/YAML config file (e.g. configs/mycore.json)?\n> "
-        ).strip()
-
-        if user_in.lower() in {"y", "yes"}:
-            args.config = None  # stick with default map
-            print("✅ Using built-in default signals.")
-        elif user_in:
-            args.config = user_in  # treat input as path
-            print(f"📂 Using custom config file: {args.config}")
-        else:
-            args.config = None
-            print("⚠️ Empty input, falling back to built-in defaults.")
+    
     
 
 

@@ -48,15 +48,25 @@ CLOCK_SIGNAL = None
 
 parser = argparse.ArgumentParser(description="Generate an HTML animation for a pipelined RISC-V processor from a VCD file.")
 parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
-parser.add_argument("-c", "--config", help="Path to signal-map JSON/YAML file. If not given, you will be asked whether to use built-in defaults or provide a file.")
+
 args = parser.parse_args()
 
-config_status_ok = None
-config_status_msg = ""
+
 
 VCD_FILE = args.vcd_file
 
-if not VCD_FILE:
+if VCD_FILE:
+    # 🟢 Automatically add .vcd if missing and file exists
+    if not VCD_FILE.lower().endswith(".vcd") and os.path.exists(VCD_FILE + ".vcd"):
+        VCD_FILE = VCD_FILE + ".vcd"
+
+    # 🟠 If still not found, print a clear message and exit
+    if not os.path.exists(VCD_FILE):
+        print(f"❌ Error: VCD file '{VCD_FILE}' not found.")
+        print("Hint: make sure the file exists in the same directory or add the full path.")
+        sys.exit(1)
+else:
+    # 🟣 No argument given → interactive prompt
     while True:
         VCD_FILE = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
         if not VCD_FILE.lower().endswith(".vcd") and os.path.exists(VCD_FILE + ".vcd"):
@@ -68,22 +78,6 @@ if not VCD_FILE:
             print(f"❌ File '{VCD_FILE}' not found. Please try again.\n")
 
 
-if not args.config:
-    user_in = input(
-        "\nNo config file specified.\n"
-        "Do you want to use the built-in default signals (type Y or Yes),\n"
-        "or type the path to a JSON/YAML config file (e.g. configs/mycore.json)?\n> "
-    ).strip()
-
-    if user_in.lower() in {"y", "yes"}:
-        args.config = None  # Signal to use the default map
-        print("✅ Using built-in default signals.")
-    elif user_in:
-        args.config = user_in  # Treat user input as the path
-        print(f"📂 Using custom config file: {args.config}")
-    else:
-        args.config = None
-        print("⚠️ Empty input, falling back to built-in defaults.")
 
 try:
     vcd = VCDVCD(VCD_FILE, store_tvs=True)
@@ -150,109 +144,46 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
             missing_signals_by_label[label].append(key)
     return resolved
 
-def get_default_signal_maps():
-    """Returns the hardcoded default signal maps."""
-    stage_signals_raw = {
-        "IF": ["HazardDetectionRV32I.core.IFBarrier.io_pc_out", "PipelinedRV32I.core.ifBarrier.io_pc_out"],
-        "ID": ["HazardDetectionRV32I.core.IDBarrier.pcReg", "PipelinedRV32I.core.idBarrier.pcReg"],
-        "EX": ["HazardDetectionRV32I.core.EXBarrier.pcReg", "PipelinedRV32I.core.exBarrier.pcReg"],
-        "MEM": ["HazardDetectionRV32I.core.MEMBarrier.pcReg", "PipelinedRV32I.core.memBarrier.pcReg"],
-        "WB": ["HazardDetectionRV32I.core.WBBarrier.pcReg", "PipelinedRV32I.core.wbBarrier.pcReg"]
-    }
-    instruction_signals_raw = {
-        "IF": ["HazardDetectionRV32I.core.IFBarrier.io_inst_out", "PipelinedRV32I.core.ifBarrier.io_inst_out"],
-        "ID": ["HazardDetectionRV32I.core.IDBarrier.instReg", "PipelinedRV32I.core.idBarrier.instReg"],
-        "EX": ["HazardDetectionRV32I.core.EXBarrier.instReg", "PipelinedRV32I.core.exBarrier.instReg"],
-        "MEM": ["HazardDetectionRV32I.core.MEMBarrier.instReg", "PipelinedRV32I.core.memBarrier.instReg"],
-        "WB": ["HazardDetectionRV32I.core.WBBarrier.instReg", "PipelinedRV32I.core.wbBarrier.instReg"]
-    }
-    ex_signals_raw = {
-        "operandA": ["HazardDetectionRV32I.core.EX.io_operandA", "PipelinedRV32I.core.exStage.io_data1_in"],
-        "operandB": ["HazardDetectionRV32I.core.EX.io_operandB", "PipelinedRV32I.core.exStage.operandB"],
-        "aluResult": ["HazardDetectionRV32I.core.EX.io_aluResult", "PipelinedRV32I.core.exStage.aluResult"],
-        "UOP": ["HazardDetectionRV32I.core.EX.io_uop", "PipelinedRV32I.core.exStage.io_upo_in"]
-    }
+
+
+# --- Hardcoded Config Path ---
+CONFIG_FILE = "configs/pipeline.json"
+
+# --- Load Signal Map ---
+try:
+    print(f"\nAttempting to load signal map from: {CONFIG_FILE}")
+    all_signals_raw = load_signal_map(CONFIG_FILE)
+    print(f"✅ Successfully loaded '{CONFIG_FILE}'")
+
+    # Organize signals from the loaded file
+    stage_signals_raw = {k.replace("STAGE_", ""): v for k, v in all_signals_raw.items() if k.startswith("STAGE_")}
+    instruction_signals_raw = {k.replace("INSTR_", ""): v for k, v in all_signals_raw.items() if k.startswith("INSTR_")}
+    def to_camel(name: str) -> str:
+        parts = name.lower().split('_')
+        return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+
+    ex_signals_raw = {to_camel(k.replace("EX_", "")): v for k, v in all_signals_raw.items() if k.startswith("EX_")}
     wb_signals_raw = {
-        "rd": ["HazardDetectionRV32I.core.WB.io_rd", "PipelinedRV32I.core.WB.io_rd"],
-        "wb_data": ["HazardDetectionRV32I.core.WB.io_check_res", "PipelinedRV32I.core.io_check_res"]
+        k.replace("WB_", "").lower(): v
+        for k, v in all_signals_raw.items()
+        if k.startswith("WB_")
     }
-    hazard_signal_candidates = {
-        "rs1_addr": ["HazardDetectionRV32I.core.IDBarrier.io_outRS1", "PipelinedRV32I.core.idBarrier.rs1"],
-        "rs2_addr": ["HazardDetectionRV32I.core.IDBarrier.io_outRS2", "PipelinedRV32I.core.idBarrier.rs2"],
-        "opcode": ["HazardDetectionRV32I.core.ID.opcode", "PipelinedRV32I.core.idStage.opcode"],
-        "rd_mem_addr": ["HazardDetectionRV32I.core.EXBarrier.io_outRD"],
-        "rd_wb_addr": ["HazardDetectionRV32I.core.MEMBarrier.io_outRD"],
-        "forwardA": ["HazardDetectionRV32I.core.FU.io_forwardA"],
-        "forwardB": ["HazardDetectionRV32I.core.FU.io_forwardB"]
-    }
-    register_signals_raw = {f"x{i}": [f"HazardDetectionRV32I.core.regFile.regFile_{i}", f"PipelinedRV32I.core.idStage.rf.regFile_{i}"] for i in range(32)}
+    hazard_signals_raw = {}
+    for k, v in all_signals_raw.items():
+        if not k.startswith("HAZARD_"):
+            continue
+        name = k.replace("HAZARD_", "")
+        if "FORWARD" in name:
+            hazard_signals_raw[to_camel(name)] = v
+        else:
+            hazard_signals_raw[name.lower()] = v
+    register_signals_raw = {k: v for k, v in all_signals_raw.items() if k.startswith("x")}
 
-    return {
-        "stage": stage_signals_raw,
-        "instruction": instruction_signals_raw,
-        "ex": ex_signals_raw,
-        "wb": wb_signals_raw,
-        "hazard": hazard_signal_candidates,
-        "register": register_signals_raw
-    }
-
-if args.config:
-    try:
-        print(f"\nAttempting to load signal map from: {args.config}")
-        all_signals_raw = load_signal_map(args.config)
-        print(f"✅ Successfully loaded '{args.config}'")
-        config_status_ok = True
-        config_status_msg = f"Loaded signal map from '{args.config}'."
-
-        # Organize signals from the loaded file
-        stage_signals_raw = {k.replace("STAGE_", ""): v for k, v in all_signals_raw.items() if k.startswith("STAGE_")}
-        instruction_signals_raw = {k.replace("INSTR_", ""): v for k, v in all_signals_raw.items() if k.startswith("INSTR_")}
-        def to_camel(name: str) -> str:
-            parts = name.lower().split('_')
-            return parts[0] + ''.join(p.capitalize() for p in parts[1:])
-
-        ex_signals_raw = {to_camel(k.replace("EX_", "")): v for k, v in all_signals_raw.items() if k.startswith("EX_")}
-        wb_signals_raw = {
-            k.replace("WB_", "").lower(): v
-            for k, v in all_signals_raw.items()
-            if k.startswith("WB_")
-        }
-        hazard_signals_raw = {}
-        for k, v in all_signals_raw.items():
-            if not k.startswith("HAZARD_"):
-                continue
-            name = k.replace("HAZARD_", "")
-            if "FORWARD" in name:
-                hazard_signals_raw[to_camel(name)] = v
-            else:
-                hazard_signals_raw[name.lower()] = v
-        register_signals_raw = {k: v for k, v in all_signals_raw.items() if k.startswith("x")}
-
-    except Exception as e:
-        print(f"⚠️  Warning: Failed to load or parse config '{args.config}': {e}. Falling back to defaults.")
-        config_status_ok = False
-        config_status_msg = f"Failed to load or parse config '{args.config}': {e}. Falling back to built-in defaults."
-
-        # Fallback to defaults if the specified file has an error
-        defaults = get_default_signal_maps()
-        stage_signals_raw = defaults["stage"]
-        instruction_signals_raw = defaults["instruction"]
-        ex_signals_raw = defaults["ex"]
-        wb_signals_raw = defaults["wb"]
-        hazard_signals_raw = defaults["hazard"]
-        register_signals_raw = defaults["register"]
-else:
-    # This block runs if the user chose the built-in defaults
-    print("\nUsing built-in default signal map.")
-    config_status_ok = True
-    config_status_msg = "Using built-in default signal map."
-    defaults = get_default_signal_maps()
-    stage_signals_raw = defaults["stage"]
-    instruction_signals_raw = defaults["instruction"]
-    ex_signals_raw = defaults["ex"]
-    wb_signals_raw = defaults["wb"]
-    hazard_signals_raw = defaults["hazard"]
-    register_signals_raw = defaults["register"]
+except Exception as e:
+    print(f"❌ Error: Failed to load the required config file '{CONFIG_FILE}'.")
+    print(f"   Reason: {e}")
+    print("   Please ensure the file exists and is a valid JSON.")
+    sys.exit(1)
 
 
 # Now, resolve the signals using the maps we either loaded or fell back to
@@ -675,16 +606,6 @@ if all_missing_keys:
 
 
 
-config_status_html = f"""
-<div id="config-status-box" class="missing-signals-box" 
-     style="border-color:{'#2e7d32' if config_status_ok else '#ffb300'}; 
-            background-color:{'#e8f5e9' if config_status_ok else '#fff8e1'};
-            position: relative;">
-    <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
-    <strong>{'✅' if config_status_ok else '⚠️'} Config:</strong>
-    {config_status_msg}
-</div>
-"""
 
 
 
@@ -831,7 +752,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 <h2>Pipeline Animation with Register State</h2>
 
 <div style="font-size: 14px; margin-bottom: 10px;">
-{config_status_html}
+
 {missing_signals_html}
 </div>
 </div>
@@ -843,7 +764,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="playPauseBtn">Play</button>
     
     <button id="restartBtn">Restart</button>
-    <button id="toggleArrowsBtn">Hide Forwaring</button>  
+    <button id="toggleArrowsBtn">Hide Forwarding</button>  
     <button id="toggleHazardsBtn">Show Hazards</button>  
     <button id="toggleSignedBtn">Show Signed</button>
     <div class="speed-control-container">
@@ -1244,7 +1165,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map),
     reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
     missing_signals_html=missing_signals_html,
-    config_status_html=config_status_html,
+ 
 )
 
 # --- Write the final HTML file ---
@@ -1278,14 +1199,5 @@ else:
 
 print("="*50 + "\n")
 
-print("\n" + "="*50)
-print(" Configuration Result")
-print("="*50)
-if config_status_ok is True:
-    print(f"✅ {config_status_msg}")
-elif config_status_ok is False:
-    print(f"⚠️  {config_status_msg}")
-else:
-    print("ℹ️ No configuration status recorded.")
-print("="*50 + "\n")
+
 
