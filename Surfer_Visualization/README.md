@@ -8,6 +8,8 @@ This toolkit provides a configurable pipeline to transform raw VCD (Value Change
 
 Raw VCDs from complex RTL simulations, such as RISC-V pipelines, are often impractically large and filled with cryptic, auto-generated signal names. This hinders efficient debugging.
 
+![Screenshot of the animation](visualization.png)
+
 > **Before:** A raw VCD file presents a flat, unfiltered list of thousands of signals, making analysis difficult.
 
 This solution uses a Python script (`reorganize_vcd.py`) controlled by a YAML configuration file to post-process the raw VCD.  
