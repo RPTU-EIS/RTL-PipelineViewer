@@ -77,7 +77,7 @@ This generates the compact `reorganized_output.vcd` file.
 ### 4. Load in Surfer
 
 1. Open the Surfer application.  
-2. In Surfer click in File > Run command file...
+2. In Surfer click in File > Run command file...> load_filtered_vcd.sucl
 3. The waveform will load with all signals grouped as defined in the YAML file.
 
 ---
