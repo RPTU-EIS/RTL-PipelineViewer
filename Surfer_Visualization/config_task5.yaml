@@ -1,0 +1,179 @@
+# The single source of truth for the entire debug view.
+# We wrap everything in ONE root group.
+# Signal Organization (add, remove, move signals and groups as needed to fit your design and debugging needs.
+# Name without spaces for easier parsing.
+# No repetitions of names at the same hierarchical level.
+# Use subgroups to create hierarchy.
+
+
+groups:
+  - name: "RISC_V_Debug_View"  # <-- THE NEW SINGLE ROOT GROUP
+    subgroups:
+      
+      # Group 1: High-level clock and reset
+      - name: "Global"
+        signals:
+          - path: "HazardDetectionRV32I.clock"
+            name: "clock"
+          - path: "HazardDetectionRV32I.io_result"
+            name: "io_result"  
+          
+      # Group 2: Follow an instruction through the pipeline stages
+      - name: "Pipeline_Stages"
+        signals:
+        subgroups:
+          - name: "IF"
+            signals:
+            subgroups:
+              - name: "IF_Stage"
+                signals:
+                 - path: "HazardDetectionRV32I.core.IF.io_pc"
+                   name: "IF_Program_Counter"
+                 - path: "HazardDetectionRV32I.core.IF.io_instr"
+                   name: "IF_Fetched_Instruction"
+              - name: "IF_Barrier"
+                signals:
+                  - path: "HazardDetectionRV32I.core.IFBarrier.io_pc_out"
+                    name: "Program_Counter"
+                  - path: "HazardDetectionRV32I.core.IFBarrier.io_inst_out"
+                    name: "Fetched_Instruction"
+          - name: "--------------------" # spaces for visual separation must have different names
+            signals: [] 
+          
+          
+          - name: "ID"
+            signals:
+            subgroups:
+            - name: "ID_Stage"
+              signals:
+              subgroups:
+                - name: "Decoded_Instruction"
+                  signals:
+                    - path: "HazardDetectionRV32I.core.ID.opcode"
+                      name: "opcode"
+                    - path: "HazardDetectionRV32I.core.ID.funct3"
+                      name: "funct3"
+                    - path: "HazardDetectionRV32I.core.ID.funct7"
+                      name: "funct7"
+                    - path: "HazardDetectionRV32I.core.ID.rs1"
+                      name: "rs1"
+                    - path: "HazardDetectionRV32I.core.ID.rs2"
+                      name: "rs2"
+                    - path: "HazardDetectionRV32I.core.ID.io_rd"
+                      name: "rd"
+                    - path: "HazardDetectionRV32I.core.ID.io_uop" 
+                      name: "io_uop" 
+
+
+                - name: "Operands_from_RL"
+                  signals:
+                    - path: "HazardDetectionRV32I.core.ID.io_operandA"
+                      name: "Operand_A"
+                    - path: "HazardDetectionRV32I.core.ID.io_operandB"
+                      name: "Operand_B"
+
+            - name: "ID_Barrier"
+              signals:
+              - path: "HazardDetectionRV32I.core.IDBarrier.operandA"
+                name: "Operand_A_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.operandB"
+                name: "Operand_B_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.rd"
+                name: "rd_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.rs1"
+                name: "rs1_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.rs2"
+                name: "rs2_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.uop"
+                name: "uop_IDB"
+              - path: "HazardDetectionRV32I.core.IDBarrier.rs2"
+                name: "rs2_IDB"
+      
+            -  name: "-----------------"
+               signals: []
+            
+
+
+          - name: "EX"
+            signals:
+            subgroups:
+              - name: "EX_Stage"
+                signals:
+                - path: "HazardDetectionRV32I.core.EX.io_operandA"
+                  name: "ALU_Input_A"
+                - path: "HazardDetectionRV32I.core.EX.io_operandB"
+                  name: "ALU_Input_B"
+                - path: "HazardDetectionRV32I.core.EX.io_aluResult"
+                  name: "ALU_Result"
+                - path: "HazardDetectionRV32I.core.EX.io_uop"
+                  name: "ALU_Result_UOP"
+              
+              - name: "EX_Barrier"
+                signals:
+                - path: "HazardDetectionRV32I.core.EXBarrier.aluResult"
+                  name: "ALU_Result_Barrier"
+                - path: "HazardDetectionRV32I.core.EXBarrier.rd"
+                  name: "rd_EXB"
+          - name: "----------------"
+            signals: [] 
+
+             # ... (Add MEM_Stage and WB_Stage subgroups here) ...
+
+          #- name: "MEM"
+          #  signals:
+          #  subgroups:
+          #    - name: "MEM_Stage"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.MEM.aluResult"
+          #        name: "ALU_Result_MEM"
+          #    - name: "MEM_Barrier"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.MEMBarrier.aluResult"
+          #        name: "ALU_Result_Barrier_MEM"
+
+          #- name: "WB"
+          #  signals:
+          #  subgroups:
+          #    - name: "WB_Stage"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.WB.aluResult"
+          #        name: "ALU_Result_WB"
+          #    - name: "WB_Barrier"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.WBBarrier.aluResult"
+          #        name: "ALU_Result_Barrier_WB"
+                  
+         
+          
+      # Group 3: Dedicated group for the Forwarding Unit logic
+      - name: "Forwarding_Unit_DEBUG"
+        signals:
+          - path: "HazardDetectionRV32I.core.FU.io_inRS1"
+            name: "FU_rs1_ID"
+          - path: "HazardDetectionRV32I.core.FU.io_inRS2"
+            name: "FU_rs2_ID"
+          - path: "HazardDetectionRV32I.core.FU.io_inRD_mem"
+            name: "FU_rd_mem"
+          - path: "HazardDetectionRV32I.core.FU.io_inRD_wb"
+            name: "FU_rd_wb"
+
+        subgroups:
+          - name: "Forwarding_Decisions"
+            signals:
+              - path: "HazardDetectionRV32I.core.FU.io_forwardA"
+                name: "Forward_A"
+              - path: "HazardDetectionRV32I.core.FU.io_forwardB"
+                name: "Forward_B"
+
+
+# --- STRING IN ASCII ---
+derived_strings:
+  - source_path: "HazardDetectionRV32I.core.ID.io_uop" # Path to the numeric source
+    new_signal_name: "uop_ascii"                # Name for the new string signal
+    string_width_chars: 8                         # How many characters wide (8 chars = 64 bits)
+
+  - source_path: "HazardDetectionRV32I.core.EX.io_uop" # Path to the numeric source
+    new_signal_name: "UOP_ASCII"                # Name for the new string signal
+    string_width_chars: 8                         # How many characters wide (8 chars = 64 bits)
+    # The new signal will be placed in the same group as the source signal
+# --- END SECTION ---
