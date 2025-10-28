@@ -16,6 +16,7 @@ This solution uses a Python script (`reorganize_vcd.py`) controlled by a YAML co
 The script filters, renames, and groups signals according to the YAML specification. It can also generate derived ASCII-based signals from numeric data (e.g., mapping micro-op codes to string mnemonics).
 
 A provided Surfer script (`load_filtered_vcd.sucl`) then auto-loads this processed VCD into the viewer, automatically applying the complete signal hierarchy defined in the configuration.
+
 ![Screenshot of the animation](visualization2.png)
 > **After:** The processed VCD loads instantly with signals renamed and organized into logical groups (e.g., by pipeline stage).
 
