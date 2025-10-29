@@ -45,11 +45,11 @@ A provided Surfer script (`load_filtered_vcd.sucl`) then auto-loads this process
 
 ### 2. Configure Surfer Script
 
-Before first use, edit `load_filtered_vcd.sucl` and update the `load_file` command with the absolute path to where your **output VCD** file will be generated.
+Before first use, edit `load_filtered_vcd.sucl` and update the `load_file` command with the absolute path to where your **output VCD** file (reorganized.vcd) is.
 
 **Example:**
 ```bash
-load_file C:/your/project/path/reorganized_output.vcd
+load_file C:/your/project/path/reorganized.vcd
 scope_add_as_group_recursive RISC_V_Debug_View
 zoom_fit
 ```
