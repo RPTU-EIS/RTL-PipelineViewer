@@ -4,12 +4,13 @@
 # IMPORTANT: It is required the complete path. Example: C:/your_path/reorganized.vcd  
 
 
-load_file C:/Users/joels/OneDrive/Desktop/Hiwi-Jobs/Embedded_Systems/Visualization_Surfer/Approach_3/reorganized.vcd
+load_file C:/your_path/reorganized.vcd
 
 # 2. Add all signals automatically
 scope_add_as_group_recursive RISC_V_Debug_View
 
 
-# 4. Cleanup and Zoom
+# 4. Zoom
+
 
 zoom_fit
