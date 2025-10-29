@@ -1,6 +1,6 @@
 # The single source of truth for the entire debug view.
 # We wrap everything in ONE root group.
-# Signal Organization (add, remove, move signals and groups as needed to fit your design and debugging needs.
+# Signal Organization: add, remove, move signals and groups as needed to fit your design and debugging needs.
 # Name without spaces for easier parsing.
 # No repetitions of names at the same hierarchical level.
 # Use subgroups to create hierarchy.
@@ -147,4 +147,5 @@ derived_strings:
   - source_path: "PipelinedRV32I.core.exStage.8"
     new_signal_name: "UOP_ASCII"                
     string_width_chars: 8                         
+
 # --- END SECTION ---
