@@ -70,7 +70,7 @@ python reorganize_vcd.py -c config_task5.yaml -i task5.vcd -o reorganized_output
 python reorganize_vcd.py -c config_task4.yaml -i task4.vcd -o reorganized_output.vcd
 ```
 
-This generates the compact `reorganized_output.vcd` file.
+This generates the compact `reorganized.vcd` file.
 
 ---
 
