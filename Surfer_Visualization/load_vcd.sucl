@@ -1,0 +1,15 @@
+# Surfer Script - Loading signals automatically
+
+# 1. Load the VCD file. 
+# IMPORTANT: It is required the complete path. Example: C:/your_path/reorganized.vcd  
+
+
+load_file C:/Users/joels/OneDrive/Desktop/Hiwi-Jobs/Embedded_Systems/Visualization_Surfer/Approach_3/reorganized.vcd
+
+# 2. Add all signals automatically
+scope_add_as_group_recursive RISC_V_Debug_View
+
+
+# 4. Cleanup and Zoom
+
+zoom_fit

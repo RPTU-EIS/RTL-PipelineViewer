@@ -1,0 +1,15 @@
+# Surfer Script - Loading signals automatically
+
+# 1. Load the VCD file. 
+# IMPORTANT: It is required the complete path. Example: C:/your_path/reorganized.vcd  
+
+load_file_from_url https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/refs/heads/main/Surfer_Visualization/reorganize_vcd.py?token=GHSAT0AAAAAADNGFRLGSL6MBLBL6PLJVTDS2IBZDWQ
+
+
+# 2. Add all signals automatically
+scope_add_as_group_recursive RISC_V_Debug_View
+
+
+# 4. Cleanup and Zoom
+
+zoom_fit
