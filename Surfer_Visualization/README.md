@@ -62,21 +62,7 @@ This generates the compact `reorganized.vcd` file.
 ---
 
 
-### 3. Configure Surfer Script
-
-Before first use, edit `load_filtered_vcd.sucl` and update the `load_file` command with the absolute path to where your **output VCD** file (reorganized.vcd) is.
-
-**Example:**
-```bash
-load_file C:/your/project/path/reorganized.vcd
-scope_add_as_group_recursive RISC_V_Debug_View
-zoom_fit
-```
-
----
-
-
-### 4. Load in Surfer
+### 3. Load in Surfer
 
 Choose one of the two methods below.
 
