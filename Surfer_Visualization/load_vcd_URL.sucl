@@ -9,10 +9,9 @@ load_url https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/refs/head
 scope_add_as_group_recursive RISC_V_Debug_View
 
 
-# 4. Cleanup and Zoom
-
-
+# 4.  Zoom
 zoom_fit
+
 
 
 
