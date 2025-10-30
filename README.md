@@ -3,6 +3,8 @@
 An interactive HTML animation generator for visualizing RISC-V processor pipeline activity from VCD simulation files.
 
 ![Screenshot of the pipeline animation](images/Pipiline_Visualization.png)
+
+Also, an interactive HTML animation generator for visualizing RISC-V processor multistage activity from VCD simulation files.
 ![Screenshot of the pipeline animation](images/Multistage_Visualization.png)
 
 ## Overview
