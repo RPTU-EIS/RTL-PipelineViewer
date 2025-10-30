@@ -5,6 +5,7 @@ import yaml
 import sys
 import string # Added for ID generation
 from typing import Dict, Any, Set
+import difflib
 
 # --- START: Added for String Signal Generation ---
 # Mapping from numeric UOP values to mnemonics
@@ -190,6 +191,9 @@ def process_groups_recursive(out_f, groups, vcd_signals, included_ids, derived_s
     """
     if not groups: return
 
+    # Get all available VCD paths for suggestion matching
+    all_vcd_paths = list(vcd_signals.keys())
+
     for group in groups:
         group_name = group.get('name', 'Unnamed_Group')
         group_name = "".join(c for c in group_name if c in string.printable and not c.isspace() and c not in '[]{}()')
@@ -199,7 +203,14 @@ def process_groups_recursive(out_f, groups, vcd_signals, included_ids, derived_s
         if 'signals' in group and group['signals']:
             for sig_spec in group['signals']:
                 path, name = sig_spec.get('path'), sig_spec.get('name')
-                if path and name and path in vcd_signals:
+
+                # Check for malformed entries in the config
+                if not path or not name:
+                    print(f"⚠️ Warning: Skipping invalid signal entry in config (missing 'path' or 'name'): {sig_spec}")
+                    continue
+
+                if path in vcd_signals:
+                    # --- This is the EXISTING "good" path ---
                     info = vcd_signals[path]
                     sanitized_name = name
                     sanitized_name = "".join(c for c in sanitized_name if c in string.printable and not c.isspace() and c not in '[]{}()')
@@ -220,6 +231,19 @@ def process_groups_recursive(out_f, groups, vcd_signals, included_ids, derived_s
                              width_bits = num_chars * 8
                              out_f.write(f"  $var wire {width_bits} {derived_id} {derived_name} $end\n")
                              included_ids.add(derived_id)
+                else:
+                    # --- START: This is the NEW "Missing Signal" logic ---
+                    print(f"⚠️ Warning: Signal from config not found in VCD: '{path}'")
+                    
+                    # Use difflib to find close matches
+                    suggestions = difflib.get_close_matches(path, all_vcd_paths, n=3, cutoff=0.7)
+                    if suggestions:
+                        print(f"   🔍 Did you mean one of these?")
+                        for s in suggestions:
+                            print(f"       • {s}")
+                    else:
+                        print(f"   ℹ️ No similar signals found in VCD.")
+                    # --- END: New "Missing Signal" logic ---
 
         if 'subgroups' in group and group['subgroups']:
             process_groups_recursive(out_f, group['subgroups'], vcd_signals, included_ids, derived_strings_map)
