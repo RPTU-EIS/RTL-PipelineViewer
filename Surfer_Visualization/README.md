@@ -43,21 +43,7 @@ A provided Surfer script (`load_filtered_vcd.sucl`) then auto-loads this process
 - Surfer Waveform Viewer
 
 ---
-
-### 2. Configure Surfer Script
-
-Before first use, edit `load_filtered_vcd.sucl` and update the `load_file` command with the absolute path to where your **output VCD** file (reorganized.vcd) is.
-
-**Example:**
-```bash
-load_file C:/your/project/path/reorganized.vcd
-scope_add_as_group_recursive RISC_V_Debug_View
-zoom_fit
-```
-
----
-
-### 3. Run VCD Processing
+### 2. Run VCD Processing
 
 Execute the Python script from the command line, specifying the configuration, the raw input VCD and the desired output path. 
 
@@ -74,6 +60,21 @@ python reorganize_vcd.py -c config_task4.yaml -i task4.vcd -o reorganized_output
 This generates the compact `reorganized.vcd` file.
 
 ---
+
+
+### 3. Configure Surfer Script
+
+Before first use, edit `load_filtered_vcd.sucl` and update the `load_file` command with the absolute path to where your **output VCD** file (reorganized.vcd) is.
+
+**Example:**
+```bash
+load_file C:/your/project/path/reorganized.vcd
+scope_add_as_group_recursive RISC_V_Debug_View
+zoom_fit
+```
+
+---
+
 
 ### 4. Load in Surfer
 
