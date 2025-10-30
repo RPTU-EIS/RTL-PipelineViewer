@@ -3,8 +3,7 @@
 # 1. Load the VCD file. 
 # IMPORTANT: It is required the complete path. Example: C:/your_path/reorganized.vcd  
 
-load_file_from_url https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/main/Surfer_Visualization/reorganized.vcd
-
+load_file_from_url https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/refs/heads/main/Surfer_Visualization/VCD_file_examples/reorganized.vcd
 
 # 2. Add all signals automatically
 scope_add_as_group_recursive RISC_V_Debug_View
@@ -14,5 +13,6 @@ scope_add_as_group_recursive RISC_V_Debug_View
 
 
 zoom_fit
+
 
 
