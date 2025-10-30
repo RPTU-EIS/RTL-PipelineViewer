@@ -27,6 +27,7 @@ A provided Surfer script (`load_filtered_vcd.sucl`) then auto-loads this process
 - **`reorganize_vcd.py`** — The core Python processing engine.  
 - **`config_task4.yaml` / `config_task5.yaml`** — Configuration files defining signal mappings for the `PipelinedRV32I` and `HazardDetectionRV32I` designs, respectively.  
 - **`load_filtered_vcd.sucl`** — A Surfer script for automatic waveform loading and grouping.
+- **`load_vcd_URL.sucl`** — A Surfer script for loading from **GitHub** (for the Browser App).
 
 ---
 
@@ -58,7 +59,7 @@ zoom_fit
 
 ### 3. Run VCD Processing
 
-Execute the Python script from the command line, specifying the configuration, the raw input VCD, and the desired output path.
+Execute the Python script from the command line, specifying the configuration, the raw input VCD and the desired output path. 
 
 **Example (Task 5):**
 ```bash
@@ -76,11 +77,46 @@ This generates the compact `reorganized.vcd` file.
 
 ### 4. Load in Surfer
 
-1. Open the Surfer application.  
-2. In Surfer click in File > Run command file...> load_filtered_vcd.sucl
-3. The waveform will load with all signals grouped as defined in the YAML file.
+Choose one of the two methods below.
 
----
+#### Option A: Local Desktop App
+
+This method is fast and ideal for local development.
+
+1.  **Configure Local Script:** Edit the `load_vcd.sucl` file. Update the `load_file` command with the *local, absolute path* to the `reorganized.vcd` file you just created.
+
+    **Example:**
+    ```bash
+    # This path MUST be absolute
+    load_file C:/your/project/path/reorganized.vcd
+    scope_add_as_group_recursive RISC_V_Debug_View
+    zoom_fit
+    ```
+
+2.  **Run in Surfer:** Open the Surfer **desktop application**. Click `File > Run command file...` and select your local `load_vcd.sucl` file.
+3.  The waveform will load instantly.
+
+#### Option B: Browser App (via GitHub URL)
+
+This method is perfect for sharing your results or accessing them from anywhere.
+
+1.  **Push to GitHub:** After generating `reorganized.vcd` in Step 2, **commit and push** it to this GitHub repository.
+2.  **Get VCD URL:** On GitHub, navigate to the `reorganized.vcd` file. Click the **"Raw"** button and copy the URL from your browser's address bar. It must be the public, raw URL (e.g., `https://raw.githubusercontent.com/...`).
+3.  **Configure URL Script:** Edit the `load_vcd_URL.sucl` file. Update the `load_file_from_url` command with the URL you just copied.
+
+    **Example:**
+    ```bash
+    # This URL MUST be the "Raw" file link
+    load_file_from_url [https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/main/Surfer_Visualization/reorganized.vcd](https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/main/Surfer_Visualization/reorganized.vcd)
+    scope_add_as_group_recursive RISC_V_Debug_View
+    zoom_fit
+    ```
+
+4.  **Commit and Push** your changes to `load_vcd_URL.sucl`.
+5.  **Run in Browser:** Open `app.surfer-project.org`.
+    * Click `File > Run command file from URL...`
+    * Paste the **raw URL for the `.sucl` file itself** (e.g., `https://raw.githubusercontent.com/RPTU-EIS/RTL-PipelineViewer/main/Surfer_Visualization/load_vcd_URL.sucl`).
+    * Press OK. The script will load from the URL, which in turn will load the VCD from its URL.
 
 ## Configuration
 
