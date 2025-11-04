@@ -147,7 +147,7 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
 
 
 # --- Hardcoded Config Path ---
-CONFIG_FILE = "configs/pipeline.json"
+CONFIG_FILE = "configs/pipeline_extension.json"
 
 # --- Load Signal Map ---
 try:
@@ -163,6 +163,10 @@ try:
         return parts[0] + ''.join(p.capitalize() for p in parts[1:])
 
     ex_signals_raw = {to_camel(k.replace("EX_", "")): v for k, v in all_signals_raw.items() if k.startswith("EX_")}
+    mem_signals_raw = {  # keys become camelCase like the EX_* path above
+        (lambda n: ''.join([n.split('_')[0].lower()] + [p.capitalize() for p in n.split('_')[1:]]))(k.replace("MEM_", "")) : v
+        for k, v in all_signals_raw.items() if k.startswith("MEM_")
+    }
     wb_signals_raw = {
         k.replace("WB_", "").lower(): v
         for k, v in all_signals_raw.items()
@@ -190,6 +194,12 @@ except Exception as e:
 stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage", vcd_filename=VCD_FILE)
 instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction", vcd_filename=VCD_FILE)
 ex_signals = resolve_signals_with_log(ex_signals_raw, vcd, "EX", vcd_filename=VCD_FILE)
+mem_signals = resolve_signals_with_log(mem_signals_raw, vcd, "MEM", vcd_filename=VCD_FILE)
+print("\n🧩 DEBUG: MEM signal resolution result:")
+for k, v in mem_signals.items():
+    print(f"   {k:15} → {v}")
+print("🔹 End of MEM signal check\n")
+
 wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VCD_FILE)
 hazard_signals = resolve_signals_with_log(hazard_signals_raw, vcd, "Hazard", vcd_filename=VCD_FILE)
 register_signals = resolve_signals_with_log(register_signals_raw, vcd, "Register", vcd_filename=VCD_FILE)
@@ -259,7 +269,7 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
 
 
 
-instr_vals = extract_signal_at_cycles("HazardDetectionRV32I.core.IDBarrier.instReg", default_val=0, base=2)
+instr_vals = extract_signal_at_cycles("PipelinedRV32I.core.IDBarrier.io_outInstr_REG", default_val=0, base=2)
 
 
 
@@ -280,11 +290,23 @@ def extract_signals_group(signal_dict, default_val, base, store_to, postprocess_
                 val = postprocess_fn(val)
             store_to[cycle_idx][key] = val
 
+mem_values_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(mem_signals, default_val=None, base=2, store_to=mem_values_by_cycle)
 
+# Delay MEM to line up with pipeline like you do for EX/WB/hazards
+delayed_mem_values_by_cycle = [{} for _ in range(num_cycles)]
+for i in range(1, num_cycles):
+    delayed_mem_values_by_cycle[i] = mem_values_by_cycle[i-1]
 
 print(f"\n✅ List of available signals in VCD: {VCD_FILE}\n")
 for signal in vcd.signals:
     print(signal)
+
+
+print("\n🧠 MEM values sanity check (first 10 cycles):")
+for i in range(min(10, num_cycles)):
+    print(f"Cycle {i}: {mem_values_by_cycle[i]}")
+print("🔹 If empty dicts, MEM signals never resolved.\n")
 
 
 
@@ -515,27 +537,86 @@ for cycle_idx in range(num_cycles):
                 )
 
                 if (op_a is not None) and (op_b is not None) and (res is not None):
-                    # Precompute signed result (32-bit)
                     signed_result = res if res < 0x80000000 else res - 0x100000000
+                    op_a_s = str(op_a)
+                    op_b_s = str(op_b)
+                    display = f"EX<br>{op_a_s} {operator_html} {op_b_s} → {res}"
+                    tooltip += f"\n--- ALU ---\n{op_a_s} {operator_plain} {op_b_s} = {res} (unsigned)\n{op_a_s} {operator_plain} {op_b_s} = {signed_result} (signed)"
 
-                    # Store both signed and unsigned formats
-                    display = f'EX<br><span class="alu-unsigned">{op_a} {operator_html} {op_b} = {res}</span>'
-                    display += f'<span class="alu-signed" style="display:none;">{op_a} {operator_html} {op_b} = {signed_result}</span>'
-                    
-                    tooltip += f"\n--- ALU Op ---\n{op_a} {operator_plain} {op_b} = {res} (unsigned)"
-                    tooltip += f"\n{op_a} {operator_plain} {op_b} = {signed_result} (signed)"
-            elif stage == "WB":
-                wb_slot = delayed_wb_values_by_cycle[cycle_idx]
-                wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
-                wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
+            elif stage == "MEM":
+                asm_lower = (asm_text or "").lower()
+                is_store = any(asm_lower.startswith(m) for m in ["sw", "sh", "sb"])
+                is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb", "lhu", "lbu"])
 
-                if wb_data is not None and wb_rd is not None and wb_rd != 0:
+                mem_data = delayed_mem_values_by_cycle[cycle_idx]
+                ex_data  = delayed_ex_values_by_cycle[cycle_idx]
+                wb_slot  = delayed_wb_values_by_cycle[cycle_idx]
+
+                addr  = mem_data.get("addr")  or ex_data.get("aluResult")
+                wdata = mem_data.get("wdata") or ex_data.get("operandB")
+                rdata = mem_data.get("rdata") or wb_slot.get("data")
+                rd = (delayed_hazard_data_by_cycle[cycle_idx].get("rd_mem_addr") or
+                wb_slot.get("rd") or wb_slot.get("wb_rd"))
+
+                def fmt_short(x):
+                    if x is None:
+                        return "?"
                     try:
-                        wb_val = int(wb_data)
-                        display = f"WB<br>x{wb_rd} = {wb_val}"
-                        tooltip += f"\n--- Writeback ---\nx{wb_rd} = {wb_val}"
+                        return str(int(x))
                     except:
-                        pass
+                        return str(x)
+
+                display = "MEM<br>"
+                if is_store:
+                    display += f"M[{fmt_short(addr)}] = {fmt_short(wdata)}"
+                    tooltip += f"\n--- Store ---\nAddress: {addr}\nData: {wdata}"
+                elif is_load:
+                    display += f"x{rd or '?'} = M[{fmt_short(addr)}]"
+                    if rdata is not None:
+                        display += f"<br>val={fmt_short(rdata)}"
+                    tooltip += f"\n--- Load ---\nAddress: {addr}\nValue: {rdata}"
+                else:
+                    display += "—"
+
+                pipeline_data_for_js[synth_pc][cycle_idx] = {
+                    "stage": stage,
+                    "tooltip": tooltip,
+                    "display_text": display,
+                    "hazard_info": hazard_info,
+                    "is_hazard_source": is_source,
+                }
+                continue
+
+
+            elif stage == "WB":
+                # --- START OF MODIFICATION ---
+                
+                # Check if the instruction is a store (sw, sh, sb)
+                is_store = False
+                if asm_text and isinstance(asm_text, str):
+                    asm_mnemonic = asm_text.split()[0].lower()
+                    if asm_mnemonic in ["sw", "sh", "sb"]:
+                        is_store = True
+
+                if is_store:
+                    # It's a store instruction, so skip the WB stage visual
+                    display = '---' # Show '---' to indicate not used
+                    tooltip += "\\n--- Writeback (Skipped) ---"
+                    # We add a special hazard_info flag to dim the cell in JS
+                    hazard_info["is_skipped"] = True 
+                else:
+                    # It's NOT a store, so do the normal WB logic
+                    wb_slot = delayed_wb_values_by_cycle[cycle_idx]
+                    wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
+                    wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
+
+                    if wb_data is not None and wb_rd is not None and wb_rd != 0:
+                        try:
+                            wb_val = int(wb_data)
+                            display = f"WB<br>x{wb_rd} = {wb_val}"
+                            tooltip += f"\\n--- Writeback ---\\nx{wb_rd} = {wb_val}"
+                        except:
+                            pass # Keep default display 'WB'
 
 
 
@@ -629,7 +710,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 #speedValue {{ font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }}
 .content-wrapper {{ display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }}
 .pipeline-grid, .register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; }}
-.pipeline-grid {{ grid-template-columns: 380px repeat(5, 145px); }}
+.pipeline-grid {{ grid-template-columns: 380px repeat(5, 120px); }}
 .register-grid {{ grid-template-columns: 110px 210px 95px 95px;}}
 .grid-cell span {{    font-size: 16px; font-weight: bold;}}
 //.grid-cell.stage-cell {{
@@ -742,6 +823,15 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 }}
 .close-btn:hover {{
     color: #5b4d24;
+
+.stage-content {{
+    font-family: monospace;
+    font-size: 13px;
+}}
+
+.stag0e-content br + span {{
+    opacity: 0.9;
+}}
 }}
 
 
@@ -887,7 +977,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         nextBtn.disabled = currentCycle === numCycles - 1;
         // Use timeout to ensure DOM is updated before calculating arrow positions
         setTimeout(updateArrows, 0);
-    }}
+     }}
 
         function updatePipelineDisplay() {{
             // Clear only the dynamic content (stage cells and highlights)
