@@ -376,13 +376,16 @@ def convert_hex_immediates_to_decimal(disasm: str) -> str:
 reg_highlight_data_by_cycle = []
 opcodes_that_use_rs2 = {0x33, 0x23, 0x63}  # R-type, store, branch
 
+
+
 for i in range(num_cycles):
-    rs1 = delayed_hazard_data_by_cycle[i].get("rs1_addr")
-    rs2 = delayed_hazard_data_by_cycle[i].get("rs2_addr")
-    rd  = delayed_wb_values_by_cycle[i].get("rd")
-    
-  
-    raw_opcode = delayed_opcode_by_cycle_2c[i] 
+    current_hazard_data = delayed_hazard_data_by_cycle[i]
+    current_wb_data     = delayed_wb_values_by_cycle[i]
+
+    rs1 = current_hazard_data.get("rs1_addr")
+    rs2 = current_hazard_data.get("rs2_addr")
+    rd  = current_wb_data.get("rd")
+    raw_opcode = current_hazard_data.get("opcode")
 
     
     try:
