@@ -9,6 +9,7 @@ import json
 import webbrowser
 import sys
 import argparse 
+import pprint
 
 # Initialize Capstone for RISC-V 32-bit disassembly
 md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
@@ -190,6 +191,9 @@ except Exception as e:
     sys.exit(1)
 
 
+
+
+
 # Now, resolve the signals using the maps we either loaded or fell back to
 stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage", vcd_filename=VCD_FILE)
 instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction", vcd_filename=VCD_FILE)
@@ -301,13 +305,6 @@ for i in range(1, num_cycles):
 print(f"\n✅ List of available signals in VCD: {VCD_FILE}\n")
 for signal in vcd.signals:
     print(signal)
-
-
-print("\n🧠 MEM values sanity check (first 10 cycles):")
-for i in range(min(10, num_cycles)):
-    print(f"Cycle {i}: {mem_values_by_cycle[i]}")
-print("🔹 If empty dicts, MEM signals never resolved.\n")
-
 
 
 
@@ -627,9 +624,7 @@ for cycle_idx in range(num_cycles):
                 "stage": stage, "tooltip": tooltip, "display_text": display,
                 "hazard_info": hazard_info, "is_hazard_source": is_source
             }
-
-
-
+# --- Finalize Data for JS ---
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
 
@@ -655,6 +650,52 @@ for synth_pc in sorted_synth_pcs:
     filtered_synth_pc_to_actual_pc[synth_pc] = actual_pc  # Track valid instructions only
 
 
+
+
+mem_activity_by_cycle = []
+for cycle_idx in range(num_cycles):
+    mem_data = delayed_mem_values_by_cycle[cycle_idx] if cycle_idx < len(delayed_mem_values_by_cycle) else {}
+    # Fallbacks — some projects store addr/wdata/rdata under different keys; use best-effort lookups
+    addr = mem_data.get("addr") or mem_data.get("dmem_addr") or mem_data.get("io_dmem_addr") or mem_data.get("io_addr")
+    wdata = mem_data.get("wdata") or mem_data.get("wd") or mem_data.get("wdat") or mem_data.get("dmem_wData")
+    rdata = mem_data.get("rdata") or wb_slot.get("data")
+    wr_en = mem_data.get("wrEn") or mem_data.get("wr_en") or mem_data.get("memWr") or mem_data.get("io_memWr")
+    rd_en = mem_data.get("rdEn") or mem_data.get("rd_en") or mem_data.get("memRd") or mem_data.get("io_memRd")
+
+    # Normalize simple bool/int
+    try:
+        wr_flag = bool(int(wr_en)) if wr_en is not None else False
+    except Exception:
+        wr_flag = bool(wr_en)
+
+
+    try:
+        rd_flag = bool(int(rd_en)) if rd_en is not None else False
+    except Exception:
+        rd_flag = bool(rd_en)
+
+    # Determine type
+    is_store = wr_flag
+    is_load = 1 if rdata != 0 else 0 
+
+    #is_load = rd_flag and not wr_flag
+    
+    print(f"  rdata={rdata} → is_load={is_load}")
+          
+
+    mem_activity_by_cycle.append({
+        "cycle": cycle_idx,
+        "addr": addr,
+        "wdata": wdata,
+        "rdata": rdata,
+        "wr_en": wr_flag,
+        "rd_en": rd_flag,
+        "is_store": is_store,
+        "is_load": is_load
+    })
+
+# Add it to the HTML context (JSON serializable)
+mem_activity_js = json.dumps(mem_activity_by_cycle)
 
 
 
@@ -695,6 +736,8 @@ if all_missing_keys:
 
 # --- HTML Generation ---
 color_map_js = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
+
+
 
 
 html_content = """
@@ -836,6 +879,14 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     opacity: 0.9;
 }}
 }}
+#memActivityTable thead tr {{
+        background-color: #1e3a8a; /* Deep blue */
+        color: white;
+    }}
+    #memActivityTable th {{
+        font-weight: 600;
+        text-align: center;
+    }}
 
 
 
@@ -860,6 +911,8 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="toggleArrowsBtn">Hide Forwarding</button>  
     <button id="toggleHazardsBtn">Show Hazards</button>  
     <button id="toggleSignedBtn">Show Signed</button>
+    <button id="toggleMemActivityBtn">Show MEM Activity</button>
+
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
         <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
@@ -876,7 +929,26 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
          </div>
 
-
+    <!-- MEM Activity Panel -->
+    <div id="mem-activity-panel" style="display: none; margin-top: 20px; max-width: 1000px; margin-left: auto; margin-right: auto;">
+        <h3>Memory Activity (current cycle)</h3>
+        <table id="memActivityTable" style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Cycle</th>
+                
+                    <th style="border: 1px solid #ddd; padding: 8px;">Address</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Write Data</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Read Data</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">WrEn</th>
+                
+                </tr>
+            </thead>
+            <tbody id="memActivityTbody">
+                <!-- Filled dynamically -->
+            </tbody>
+        </table>
+    </div>
 
     <div class="content-wrapper">
         <div class="pipeline-container">
@@ -895,6 +967,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                 <div class="grid-header">Write (WB)</div>
             </div>
         </div>
+
+    
+        
+    
+       
 </div>
 
 
@@ -921,6 +998,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     const speedControl = document.getElementById('speedControl');
     const speedValue = document.getElementById('speedValue');
     const searchBox = document.getElementById('searchBox');
+
+    const memActivity = {mem_activity_js};   // inserted by Python string.format
+    const memActivityPanel = document.getElementById('mem-activity-panel');
+    const memActivityTbody = document.getElementById('memActivityTbody');
+    const toggleMemActivityBtn = document.getElementById('toggleMemActivityBtn');
 
     // --- MODIFICATION: Refactored to build the static grid once ---
     function populateStaticGrid() {{
@@ -976,6 +1058,11 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         cycleCounter.textContent = `Cycle ${{currentCycle}} / ${{numCycles - 1}}`;
         updatePipelineDisplay();
         updateRegisterTable();
+
+        if (memActivityPanel.style.display !== 'none') {{
+            renderMemActivityForCycle(currentCycle);
+        }}  
+
         prevBtn.disabled = currentCycle === 0;
         nextBtn.disabled = currentCycle === numCycles - 1;
         // Use timeout to ensure DOM is updated before calculating arrow positions
@@ -1086,52 +1173,54 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             }}
 
     
-    function updateRegisterTable() {{
-        const currentRegs = registerData[currentCycle] || {{}};
-        const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {{}};
-        const highlights = regHighlightData[currentCycle] || {{}};
+        function updateRegisterTable() {{
+            const currentRegs = registerData[currentCycle] || {{}};
+            const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {{}};
+            const highlights = regHighlightData[currentCycle] || {{}};
 
-        for (let i = 0; i < 32; i++) {{
-            const valCell = document.getElementById(`reg-val-${{i}}`);
-            const currentVal = currentRegs[`x${{i}}`] || '0x00000000';
-            const prevVal = prevRegs[`x${{i}}`] || '0x00000000';
+            for (let i = 0; i < 32; i++) {{
+                const valCell = document.getElementById(`reg-val-${{i}}`);
+                const currentVal = currentRegs[`x${{i}}`] || '0x00000000';
+                const prevVal = prevRegs[`x${{i}}`] || '0x00000000';
 
-            // Show decimal as *binary* if hex digits are only 0/1; otherwise as hex
-            let displayValue = currentVal;
-            if (typeof currentVal === 'string' && currentVal.startsWith('0x')) {{
-                const digits = currentVal.slice(2);
-                let dec = Number.NaN;
+                // Show decimal as *binary* if hex digits are only 0/1; otherwise as hex
+                let displayValue = currentVal;
+                if (typeof currentVal === 'string' && currentVal.startsWith('0x')) {{
+                    const digits = currentVal.slice(2);
+                    let dec = Number.NaN;
 
-                if (/^[01]+$/.test(digits)) {{
-                    dec = parseInt(digits, 2);
-                }} else if (/^[0-9a-fA-F]+$/.test(digits)) {{
-                    dec = parseInt(digits, 16);
+                    if (/^[01]+$/.test(digits)) {{
+                        dec = parseInt(digits, 2);
+                    }} else if (/^[0-9a-fA-F]+$/.test(digits)) {{
+                        dec = parseInt(digits, 16);
+                    }}
+
+                    if (!Number.isNaN(dec)) {{
+                        displayValue = `${{currentVal}} (${{dec}})`;
+                    }}
                 }}
 
-                if (!Number.isNaN(dec)) {{
-                    displayValue = `${{currentVal}} (${{dec}})`;
+                valCell.textContent = displayValue;
+                const readCell = document.getElementById(`reg-read-${{i}}`);
+                const writeCell = document.getElementById(`reg-write-${{i}}`);
+                readCell.textContent = '';
+                writeCell.textContent = '';
+
+                // ✅ Only show dots from cycle 3 onward
+                if (currentCycle >= 3) {{
+                    if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
+                        readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
+                    }}
+                    if (i !== 0 && highlights.wb_rd === i) {{
+                        writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+                    }}
                 }}
+
+                valCell.classList.toggle('changed', currentVal !== prevVal);
             }}
-
-            valCell.textContent = displayValue;
-            const readCell = document.getElementById(`reg-read-${{i}}`);
-            const writeCell = document.getElementById(`reg-write-${{i}}`);
-            readCell.textContent = '';
-            writeCell.textContent = '';
-
-            // ✅ Only show dots from cycle 3 onward
-            if (currentCycle >= 3) {{
-                if (highlights.id_rs1 === i || highlights.id_rs2 === i) {{
-                    readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
-                }}
-                if (i !== 0 && highlights.wb_rd === i) {{
-                    writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
-                }}
-            }}
-
-            valCell.classList.toggle('changed', currentVal !== prevVal);
         }}
-    }}
+
+
 
     
     // --- NEW: Function to draw a single arrow ---
@@ -1180,6 +1269,63 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         }});
     }}
 
+    function renderMemActivityForCycle(cycle) {{
+    memActivityTbody.innerHTML = ''; // clear
+
+    const entry = memActivity[cycle];
+    if (!entry) {{
+        memActivityTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:10px;">No mem signals resolved for this cycle</td></tr>';
+        return;
+    }}
+
+    const tr = document.createElement('tr');
+
+    // cycle
+    let td = document.createElement('td');
+    td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.style.textAlign = 'center';
+    td.textContent = entry.cycle;
+    tr.appendChild(td);
+
+    // type
+    /*td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.is_store ? 'STORE' : (entry.is_load ? 'LOAD' : 'NONE');
+    tr.appendChild(td);*/
+
+    // address
+    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.addr === undefined || entry.addr === null ? 'N/A' : entry.addr;
+    td.style.textAlign = 'center';
+    tr.appendChild(td);
+
+    // wdata
+    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.wdata === undefined || entry.wdata === null ? 'N/A' : entry.wdata;
+    td.style.textAlign = 'center';
+    tr.appendChild(td);
+
+    // rdata
+    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.rdata === undefined || entry.rdata === null ? 'N/A' : entry.rdata;
+    td.style.textAlign = 'center';
+    tr.appendChild(td);
+
+    // wr_en
+    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.wr_en ? '1' : '0';
+    td.style.textAlign = 'center';
+    tr.appendChild(td);
+
+    // rd_en
+    /*td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
+    td.textContent = entry.rd_en ? '1' : '0';
+    td.style.textAlign = 'center';
+    tr.appendChild(td);*/
+
+    memActivityTbody.appendChild(tr);
+}}
+
+
 
     function nextCycle() {{ if (currentCycle < numCycles - 1) {{ currentCycle++; updateDisplay(); }} else {{ stopAnimation(); }} }}
     function prevCycle() {{ if (currentCycle > 0) {{ currentCycle--; updateDisplay(); }} }}
@@ -1224,6 +1370,15 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         updateDisplay(); // re-render pipeline with or without hazard highlights
     }});
 
+    toggleMemActivityBtn.addEventListener('click', () => {{
+        const shown = memActivityPanel.style.display !== 'none';
+        memActivityPanel.style.display = shown ? 'none' : 'block';
+        toggleMemActivityBtn.textContent = shown ? 'Show MEM Activity' : 'Hide MEM Activity';
+        if (!shown) {{
+            renderMemActivityForCycle(currentCycle);
+        }}
+    }});
+
     // Initial setup
     populateStaticGrid();
     updateDisplay();
@@ -1258,6 +1413,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     vcd_actual_to_synthetic_pc_map_js=json.dumps(vcd_actual_to_synthetic_pc_map),
     reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
     missing_signals_html=missing_signals_html,
+    mem_activity_js=mem_activity_js,
  
 )
 
@@ -1267,7 +1423,10 @@ with open(output_html, "w",  encoding="utf-8") as f:
     f.write(html_content)
 
 print(f"✅ Successfully generated '{output_html}'. Open this file in your web browser to view the animation.")
-#webbrowser.open_new_tab(output_html)
+webbrowser.open_new_tab(output_html)
+
+
+
 
 
 all_missing_keys = [key for keys in missing_signals_by_label.values() for key in keys]
