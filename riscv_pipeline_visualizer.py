@@ -159,6 +159,9 @@ try:
     # Organize signals from the loaded file
     stage_signals_raw = {k.replace("STAGE_", ""): v for k, v in all_signals_raw.items() if k.startswith("STAGE_")}
     instruction_signals_raw = {k.replace("INSTR_", ""): v for k, v in all_signals_raw.items() if k.startswith("INSTR_")}
+
+    stall_signals_raw = {k.replace("STALL_", ""): v for k, v in all_signals_raw.items() if k.startswith("STALL_")}
+    
     def to_camel(name: str) -> str:
         parts = name.lower().split('_')
         return parts[0] + ''.join(p.capitalize() for p in parts[1:])
@@ -199,6 +202,9 @@ stage_signals = resolve_signals_with_log(stage_signals_raw, vcd, "Stage", vcd_fi
 instruction_signals = resolve_signals_with_log(instruction_signals_raw, vcd, "Instruction", vcd_filename=VCD_FILE)
 ex_signals = resolve_signals_with_log(ex_signals_raw, vcd, "EX", vcd_filename=VCD_FILE)
 mem_signals = resolve_signals_with_log(mem_signals_raw, vcd, "MEM", vcd_filename=VCD_FILE)
+stall_signals = resolve_signals_with_log(stall_signals_raw, vcd, "Stall", vcd_filename=VCD_FILE)
+
+
 print("\n🧩 DEBUG: MEM signal resolution result:")
 for k, v in mem_signals.items():
     print(f"   {k:15} → {v}")
@@ -207,6 +213,9 @@ print("🔹 End of MEM signal check\n")
 wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VCD_FILE)
 hazard_signals = resolve_signals_with_log(hazard_signals_raw, vcd, "Hazard", vcd_filename=VCD_FILE)
 register_signals = resolve_signals_with_log(register_signals_raw, vcd, "Register", vcd_filename=VCD_FILE)
+
+
+
 
 
 
@@ -330,6 +339,10 @@ def postprocess_register(val):
 register_values_by_cycle = [{} for _ in range(num_cycles)]
 extract_signals_group(register_signals, default_val=0, base=16, store_to=register_values_by_cycle, postprocess_fn=postprocess_register)
 
+stall_values_by_cycle = [{} for _ in range(num_cycles)]
+extract_signals_group(stall_signals, default_val=0, base=2, store_to=stall_values_by_cycle)
+
+
 #print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
 
 
@@ -358,6 +371,14 @@ if num_cycles > 0:
 delayed_opcode_by_cycle_2c = [None] * num_cycles
 for i in range(2, num_cycles):
     delayed_opcode_by_cycle_2c[i] = opcode_values_by_cycle[i-2]
+
+
+delayed_stall_values_by_cycle = [{} for _ in range(num_cycles)]
+for i in range(1, num_cycles):
+    delayed_stall_values_by_cycle[i] = stall_values_by_cycle[i-1]
+delayed_stall_values_by_cycle[0] = stall_values_by_cycle[0] if num_cycles>0 else {}
+
+
 
 def convert_hex_immediates_to_decimal(disasm: str) -> str:
     def replace_hex(match):
@@ -472,159 +493,112 @@ for actual_pc in all_pcs_from_vcd:
         synthetic_pc_counter += 4
 
 # --- Prepare Data for HTML/JS ---
+# --- CORRECTION: Prepare Data for HTML/JS ---
 pipeline_data_for_js = defaultdict(lambda: [None] * num_cycles)
+
 for cycle_idx in range(num_cycles):
     
+    # 1. Get Hazard and Stall Data for this cycle
     current_hazard_data = delayed_hazard_data_by_cycle[cycle_idx]
+    # Note: Use stall_values (undelayed) because stalls happen effectively immediately
+    current_stalls = stall_values_by_cycle[cycle_idx] 
+
     forwardA = current_hazard_data.get("forwardA", 0)
     forwardB = current_hazard_data.get("forwardB", 0)
+    
     hazard_sources = set()
     if forwardA == 1 or forwardB == 1: hazard_sources.add(cycle_stage_pc[cycle_idx].get("MEM"))
     if forwardA == 2 or forwardB == 2: hazard_sources.add(cycle_stage_pc[cycle_idx].get("WB"))
     
+    # 2. Iterate through stages ONCE per cycle
     for stage, actual_pc in cycle_stage_pc[cycle_idx].items():
         if actual_pc in vcd_actual_to_synthetic_pc_map:
             synth_pc = vcd_actual_to_synthetic_pc_map[actual_pc]
             asm_text = actual_pc_to_disassembled_instr.get(actual_pc, {}).get("asm", "N/A_ASM")
+            
+            # Defaults
             tooltip = f"Stage: {stage}\nPC: 0x{actual_pc:08x}\nInstruction: {asm_text}"
             display = stage
-            # --- MODIFICATION: Added source_pc_mem/wb for arrows ---
             hazard_info = {"forwardA": 0, "forwardB": 0, "source_pc_mem": None, "source_pc_wb": None}
             is_source = actual_pc in hazard_sources
             if is_source: tooltip += "\n--- Hazard Source ---"
 
+            # --- STAGE SPECIFIC LOGIC ---
             if stage == "EX":
                 hazard_info["forwardA"] = forwardA
                 hazard_info["forwardB"] = forwardB
                 if forwardA == 1 or forwardB == 1:
-                    hazard_info["source_pc_mem"] = vcd_actual_to_synthetic_pc_map.get(
-                        cycle_stage_pc[cycle_idx].get("MEM")
-                    )
+                    hazard_info["source_pc_mem"] = vcd_actual_to_synthetic_pc_map.get(cycle_stage_pc[cycle_idx].get("MEM"))
                 if forwardA == 2 or forwardB == 2:
-                    hazard_info["source_pc_wb"] = vcd_actual_to_synthetic_pc_map.get(
-                        cycle_stage_pc[cycle_idx].get("WB")
-                    )
+                    hazard_info["source_pc_wb"] = vcd_actual_to_synthetic_pc_map.get(cycle_stage_pc[cycle_idx].get("WB"))
 
-                # --- Pretty operator like in mp4.py ---
                 ex_data = delayed_ex_values_by_cycle[cycle_idx]
-                op_a = ex_data.get("operandA")
-                op_b = ex_data.get("operandB")
-                res  = ex_data.get("aluResult")
+                op_a, op_b, res = ex_data.get("operandA"), ex_data.get("operandB"), ex_data.get("aluResult")
 
-                # Map mnemonics -> math symbols
-                operator_map_plain = {
-                    "ADDI": "+", "ADD": "+", "SUB": "-",
-                    "AND": "&", "ANDI": "&",
-                    "OR":  "|", "ORI":  "|",
-                    "XOR": "^", "XORI": "^",
-                    "SLL": "<<", "SLLI": "<<",
-                    "SRL": ">>", "SRLI": ">>",
-                    "SRA": ">>>", "SRAI": ">>>",
-                    "SLT": "<", "SLTI": "<",
-                    "SLTU": "<u", "SLTIU": "<u",
-                }
-
-                # Safe mnemonic extraction (works even if asm_text is "N/A_ASM")
+                # Operator mapping
                 mnemonic = (asm_text.split()[0] if isinstance(asm_text, str) and asm_text else "").upper()
-                operator_plain = operator_map_plain.get(mnemonic, mnemonic)
-
-                # Escape for HTML cell so <, >, & render visually
-                operator_html = (
-                    operator_plain
-                    .replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                )
+                operator_map = {"ADDI": "+", "ADD": "+", "SUB": "-", "AND": "&", "OR": "|", "XOR": "^", "SLL": "<<", "SRL": ">>"}
+                operator_plain = operator_map.get(mnemonic, mnemonic)
+                operator_html = operator_plain.replace("&", "&amp;").replace("<", "&lt;")
 
                 if (op_a is not None) and (op_b is not None) and (res is not None):
-                    signed_result = res if res < 0x80000000 else res - 0x100000000
-                    op_a_s = str(op_a)
-                    op_b_s = str(op_b)
-                    display = f"EX<br>{op_a_s} {operator_html} {op_b_s} → {res}"
-                    tooltip += f"\n--- ALU ---\n{op_a_s} {operator_plain} {op_b_s} = {res} (unsigned)\n{op_a_s} {operator_plain} {op_b_s} = {signed_result} (signed)"
+                    display = f"EX<br>{op_a} {operator_html} {op_b} → {res}"
+                    tooltip += f"\n--- ALU ---\n{op_a} {operator_plain} {op_b} = {res}"
 
             elif stage == "MEM":
                 asm_lower = (asm_text or "").lower()
                 is_store = any(asm_lower.startswith(m) for m in ["sw", "sh", "sb"])
-                is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb", "lhu", "lbu"])
-
+                is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb"])
+                
                 mem_data = delayed_mem_values_by_cycle[cycle_idx]
-                ex_data  = delayed_ex_values_by_cycle[cycle_idx]
-                wb_slot  = delayed_wb_values_by_cycle[cycle_idx]
-
-                addr  = mem_data.get("addr")  or ex_data.get("aluResult")
-                wdata = mem_data.get("wdata") or ex_data.get("operandB")
-                rdata = mem_data.get("rdata") or wb_slot.get("data")
-                rd = (delayed_hazard_data_by_cycle[cycle_idx].get("rd_mem_addr") or
-                wb_slot.get("rd") or wb_slot.get("wb_rd"))
-
-                def fmt_short(x):
-                    if x is None:
-                        return "?"
-                    try:
-                        return str(int(x))
-                    except:
-                        return str(x)
-
+                addr = mem_data.get("addr")
+                wdata = mem_data.get("wdata")
+                
                 display = "MEM<br>"
                 if is_store:
-                    display += f"M[{fmt_short(addr)}] = {fmt_short(wdata)}"
-                    tooltip += f"\n--- Store ---\nAddress: {addr}\nData: {wdata}"
+                    display += f"M[{addr}] = {wdata}"
+                    tooltip += f"\n--- Store ---\nAddr: {addr}\nData: {wdata}"
                 elif is_load:
-                    display += f"x{rd or '?'} = M[{fmt_short(addr)}]"
-                    if rdata is not None:
-                        display += f"<br>val={fmt_short(rdata)}"
-                    tooltip += f"\n--- Load ---\nAddress: {addr}\nValue: {rdata}"
+                    display += f"Load M[{addr}]"
+                    tooltip += f"\n--- Load ---\nAddr: {addr}"
                 else:
                     display += "—"
 
-                pipeline_data_for_js[synth_pc][cycle_idx] = {
-                    "stage": stage,
-                    "tooltip": tooltip,
-                    "display_text": display,
-                    "hazard_info": hazard_info,
-                    "is_hazard_source": is_source,
-                }
-                continue
-
-
             elif stage == "WB":
-                # --- START OF MODIFICATION ---
-                
-                # Check if the instruction is a store (sw, sh, sb)
                 is_store = False
                 if asm_text and isinstance(asm_text, str):
-                    asm_mnemonic = asm_text.split()[0].lower()
-                    if asm_mnemonic in ["sw", "sh", "sb"]:
+                    if asm_text.split()[0].lower() in ["sw", "sh", "sb"]:
                         is_store = True
-
+                
                 if is_store:
-                    # It's a store instruction, so skip the WB stage visual
-                    display = '---' # Show '---' to indicate not used
-                    tooltip += "\\n--- Writeback (Skipped) ---"
-                    # We add a special hazard_info flag to dim the cell in JS
-                    hazard_info["is_skipped"] = True 
+                    display = '---'
+                    hazard_info["is_skipped"] = True
                 else:
-                    # It's NOT a store, so do the normal WB logic
                     wb_slot = delayed_wb_values_by_cycle[cycle_idx]
                     wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
                     wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
+                    if wb_data is not None and wb_rd:
+                        display = f"WB<br>x{wb_rd} = {wb_data}"
+                        tooltip += f"\nWB: x{wb_rd} = {wb_data}"
 
-                    if wb_data is not None and wb_rd is not None and wb_rd != 0:
-                        try:
-                            wb_val = int(wb_data)
-                            display = f"WB<br>x{wb_rd} = {wb_val}"
-                            tooltip += f"\\n--- Writeback ---\\nx{wb_rd} = {wb_val}"
-                        except:
-                            pass # Keep default display 'WB'
+            # --- NEW: MERGED STALL LOGIC ---
+            is_stalled = False
+            # Check if THIS stage is stalled in THIS cycle
+            if stage == "IF" and current_stalls.get("IF") == 1:
+                is_stalled = True
+            elif stage == "ID" and current_stalls.get("ID") == 1:
+                is_stalled = True
+            # Add other stages here if your JSON supports STALL_EX, etc.
 
-
-
+            # --- WRITE FINAL DATA TO DICT ---
             pipeline_data_for_js[synth_pc][cycle_idx] = {
-                "stage": stage, "tooltip": tooltip, "display_text": display,
-                "hazard_info": hazard_info, "is_hazard_source": is_source
+                "stage": stage,
+                "tooltip": tooltip,
+                "display_text": display,
+                "hazard_info": hazard_info,
+                "is_hazard_source": is_source,
+                "is_stalled": is_stalled  # <--- Passed correctly now
             }
-# --- Finalize Data for JS ---
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
 
@@ -888,7 +862,23 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         text-align: center;
     }}
 
+.stalled-stage {{
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255, 0, 0, 0.2),
+      rgba(255, 0, 0, 0.2) 10px,
+      rgba(255, 0, 0, 0.3) 10px,
+      rgba(255, 0, 0, 0.3) 20px
+    );
+    border: 2px solid red !important;
+    animation: pulse-stall 1s infinite;
+}}
 
+@keyframes pulse-stall {{
+    0% {{ transform: scale(1); }}
+    50% {{ transform: scale(1.02); }}
+    100% {{ transform: scale(1); }}
+}}
 
 </style>
 </head>
@@ -1073,6 +1063,8 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
             // Clear only the dynamic content (stage cells and highlights)
             document.querySelectorAll('.stage-cell').forEach(c => c.innerHTML = '');
             document.querySelectorAll('.instruction-label').forEach(l => l.classList.remove('hazard-source-highlight'));
+
+            
             
             Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {{
                 const instrCycleData = cycleData[currentCycle];
@@ -1081,15 +1073,25 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                         document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
                     }}
                     const stageIdx = {{IF:0, ID:1, EX:2, MEM:3, WB:4}}[instrCycleData.stage];
-                    const stageCell = document.getElementById(`stage-cell-${{synthPc}}-${{stageIdx}}`);
-                    if (!stageCell) return;
+                    
                     
                     const contentDiv = document.createElement('div');
+                    const stageCell = document.getElementById(`stage-cell-${{synthPc}}-${{stageIdx}}`);
+                    if (!stageCell) return;
                     contentDiv.className = 'stage-content';
                     contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
                     contentDiv.innerHTML = instrCycleData.display_text;
                     // Assign an ID for the arrow drawing logic
                     contentDiv.id = `content-${{synthPc}}-${{instrCycleData.stage}}`;
+
+                    // Highlight stalled stages
+                    if (instrCycleData.is_stalled) {{
+                        contentDiv.classList.add('stalled-stage');
+                        // Optional: Overlay text
+                        contentDiv.innerHTML = "<strong>STALL</strong><br>" + instrCycleData.display_text;
+                    }} else {{
+                        contentDiv.innerHTML = instrCycleData.display_text;
+                    }}
 
                     // Only show the blue "forwarding destination" highlight when arrows are visible
                     if (instrCycleData.stage === "EX") {{
