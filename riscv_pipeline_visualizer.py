@@ -339,8 +339,8 @@ def postprocess_register(val):
 register_values_by_cycle = [{} for _ in range(num_cycles)]
 extract_signals_group(register_signals, default_val=0, base=16, store_to=register_values_by_cycle, postprocess_fn=postprocess_register)
 
-stall_values_by_cycle = [{} for _ in range(num_cycles)]
-extract_signals_group(stall_signals, default_val=0, base=2, store_to=stall_values_by_cycle)
+stall_values_raw = [{} for _ in range(num_cycles)]
+extract_signals_group(stall_signals, default_val=0, base=2, store_to=stall_values_raw)
 
 
 #print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
@@ -373,10 +373,13 @@ for i in range(2, num_cycles):
     delayed_opcode_by_cycle_2c[i] = opcode_values_by_cycle[i-2]
 
 
-delayed_stall_values_by_cycle = [{} for _ in range(num_cycles)]
+stall_values_by_cycle = [{} for _ in range(num_cycles)]
 for i in range(1, num_cycles):
-    delayed_stall_values_by_cycle[i] = stall_values_by_cycle[i-1]
-delayed_stall_values_by_cycle[0] = stall_values_by_cycle[0] if num_cycles>0 else {}
+    stall_values_by_cycle[i] = stall_values_raw[i-1]
+if num_cycles > 0:
+    stall_values_by_cycle[0] = {}
+
+
 
 
 
@@ -469,19 +472,87 @@ for stage_name, pc_signal_name in stage_signals.items():
                     actual_pc_to_disassembled_instr[current_pc_val] = {"asm": f"ASM Error: {e}"}
 
 # --- Build Timeline Data ---
+# --- NEW: Build Timeline Data with Stall Handling (Latch Freeze) ---
 cycle_stage_pc = [{stage: None for stage in stage_signals} for _ in range(num_cycles)]
+
+# 1. Extract raw PC values from VCD first (as you did before)
+raw_stage_pcs = defaultdict(list)
 for stage, signal_name in stage_signals.items():
-    if signal_name not in vcd.signals: continue
+    if signal_name not in vcd.signals: 
+        raw_stage_pcs[stage] = [None] * num_cycles
+        continue
+        
     signal_tv = sorted(vcd[signal_name].tv, key=lambda x: x[0])
-    last_valid_pc, tv_idx = None, 0
-    for cycle_idx, rise_time in enumerate(rising_edges):
+    tv_idx = 0
+    last_val = None
+    
+    for rise_time in rising_edges:
         while tv_idx < len(signal_tv) and signal_tv[tv_idx][0] <= rise_time:
             val = signal_tv[tv_idx][1]
-            if 'x' not in val.lower():
-                try: last_valid_pc = int(val, 16)
-                except (ValueError, TypeError): pass
+            if 'x' not in val.lower() and 'z' not in val.lower():
+                try: last_val = int(val, 16)
+                except: pass
             tv_idx += 1
-        cycle_stage_pc[cycle_idx][stage] = last_valid_pc
+        raw_stage_pcs[stage].append(last_val)
+
+# 2. Process Cycles: Pipeline Flow Inference with "Peek Ahead"
+stage_order_reversed = ["WB", "MEM", "EX", "ID", "IF"]
+
+for i in range(num_cycles):
+    current_stalls = stall_values_by_cycle[i]
+    
+    for stage in stage_order_reversed:
+        is_signal_stalled = False
+        if stage == "IF" and current_stalls.get("IF") == 1: is_signal_stalled = True
+        elif stage == "ID" and current_stalls.get("ID") == 1: is_signal_stalled = True
+        
+        raw_val = raw_stage_pcs[stage][i]
+        
+        upstream_stage = {"ID": "IF", "EX": "ID", "MEM": "EX", "WB": "MEM"}.get(stage)
+        downstream_stage = {"IF": "ID", "ID": "EX", "EX": "MEM", "MEM": "WB"}.get(stage)
+
+        if i == 0:
+            cycle_stage_pc[i][stage] = raw_val
+            continue
+
+        prev_val_in_stage = cycle_stage_pc[i-1][stage]
+        did_move_downstream = False
+        
+        if downstream_stage:
+            instr_in_downstream = cycle_stage_pc[i][downstream_stage]
+            if prev_val_in_stage is not None and prev_val_in_stage == instr_in_downstream:
+                did_move_downstream = True
+
+        # --- LOGIC START ---
+        if is_signal_stalled:
+            if did_move_downstream and upstream_stage:
+                cycle_stage_pc[i][stage] = cycle_stage_pc[i-1][upstream_stage]
+            elif raw_val is not None and raw_val != 0:
+                 cycle_stage_pc[i][stage] = raw_val
+            else:
+                 cycle_stage_pc[i][stage] = prev_val_in_stage
+        else:
+            # Normal Operation
+            cycle_stage_pc[i][stage] = raw_val
+
+        # --- DUPLICATE FIX (The "0x24" Problem) ---
+        # If IF holds the same PC as ID (Hardware PC freeze), peek at the NEXT cycle 
+        # to see what the actual next instruction is.
+        if stage == "IF" and downstream_stage:
+            current_if = cycle_stage_pc[i]["IF"]
+            current_id = cycle_stage_pc[i]["ID"]
+            
+            # If IF and ID are identical, and we aren't at the last cycle
+            if current_if is not None and current_if == current_id and i < num_cycles - 1:
+                # Peek at the raw value for IF in the next cycle
+                next_cycle_raw_if = raw_stage_pcs["IF"][i+1]
+                # If the next cycle has a DIFFERENT instruction, assume that's what
+                # we should be showing now (Backfill).
+                if next_cycle_raw_if is not None and next_cycle_raw_if != current_if:
+                    cycle_stage_pc[i]["IF"] = next_cycle_raw_if
+
+
+
 
 # --- Assign Synthetic PCs ---
 vcd_actual_to_synthetic_pc_map = {}
@@ -493,16 +564,14 @@ for actual_pc in all_pcs_from_vcd:
         synthetic_pc_counter += 4
 
 # --- Prepare Data for HTML/JS ---
-# --- CORRECTION: Prepare Data for HTML/JS ---
+# --- FINAL FIX: Prepare Data for HTML/JS using Movement Detection ---
 pipeline_data_for_js = defaultdict(lambda: [None] * num_cycles)
+bubble_data_for_js = defaultdict(lambda: [None] * num_cycles)
 
 for cycle_idx in range(num_cycles):
     
-    # 1. Get Hazard and Stall Data for this cycle
+    # 1. Get Hazard Data (Keep this)
     current_hazard_data = delayed_hazard_data_by_cycle[cycle_idx]
-    # Note: Use stall_values (undelayed) because stalls happen effectively immediately
-    current_stalls = stall_values_by_cycle[cycle_idx] 
-
     forwardA = current_hazard_data.get("forwardA", 0)
     forwardB = current_hazard_data.get("forwardB", 0)
     
@@ -510,21 +579,41 @@ for cycle_idx in range(num_cycles):
     if forwardA == 1 or forwardB == 1: hazard_sources.add(cycle_stage_pc[cycle_idx].get("MEM"))
     if forwardA == 2 or forwardB == 2: hazard_sources.add(cycle_stage_pc[cycle_idx].get("WB"))
     
-    # 2. Iterate through stages ONCE per cycle
-    for stage, actual_pc in cycle_stage_pc[cycle_idx].items():
+    # 2. Iterate through stages
+    # 2. Iterate through stages
+    for stage in ["IF", "ID", "EX", "MEM", "WB"]:
+        actual_pc = cycle_stage_pc[cycle_idx].get(stage)
+        
+        # --- BUBBLE DETECTION (High Priority) ---
+
+        is_bubble = False
+        if stage == "EX" and cycle_idx > 0:
+            # Check the PREVIOUS cycle. 
+            # If ID stalled in Cycle N, the Bubble appears in EX in Cycle N+1.
+            prev_cycle_stalls = stall_values_by_cycle[cycle_idx - 1]
+            if prev_cycle_stalls.get("ID") == 1:
+                is_bubble = True
+                
+        if is_bubble:
+
+            upstream_pc = cycle_stage_pc[cycle_idx].get("ID")
+            if upstream_pc in vcd_actual_to_synthetic_pc_map:
+                synth_pc = vcd_actual_to_synthetic_pc_map[upstream_pc]
+                bubble_data_for_js[synth_pc][cycle_idx] = "EX"
+        # --- CASE A: VALID INSTRUCTION ---
         if actual_pc in vcd_actual_to_synthetic_pc_map:
             synth_pc = vcd_actual_to_synthetic_pc_map[actual_pc]
             asm_text = actual_pc_to_disassembled_instr.get(actual_pc, {}).get("asm", "N/A_ASM")
             
-            # Defaults
             tooltip = f"Stage: {stage}\nPC: 0x{actual_pc:08x}\nInstruction: {asm_text}"
             display = stage
             hazard_info = {"forwardA": 0, "forwardB": 0, "source_pc_mem": None, "source_pc_wb": None}
             is_source = actual_pc in hazard_sources
             if is_source: tooltip += "\n--- Hazard Source ---"
 
-            # --- STAGE SPECIFIC LOGIC ---
+            
             if stage == "EX":
+                
                 hazard_info["forwardA"] = forwardA
                 hazard_info["forwardB"] = forwardB
                 if forwardA == 1 or forwardB == 1:
@@ -534,8 +623,7 @@ for cycle_idx in range(num_cycles):
 
                 ex_data = delayed_ex_values_by_cycle[cycle_idx]
                 op_a, op_b, res = ex_data.get("operandA"), ex_data.get("operandB"), ex_data.get("aluResult")
-
-                # Operator mapping
+                
                 mnemonic = (asm_text.split()[0] if isinstance(asm_text, str) and asm_text else "").upper()
                 operator_map = {"ADDI": "+", "ADD": "+", "SUB": "-", "AND": "&", "OR": "|", "XOR": "^", "SLL": "<<", "SRL": ">>"}
                 operator_plain = operator_map.get(mnemonic, mnemonic)
@@ -544,61 +632,96 @@ for cycle_idx in range(num_cycles):
                 if (op_a is not None) and (op_b is not None) and (res is not None):
                     display = f"EX<br>{op_a} {operator_html} {op_b} → {res}"
                     tooltip += f"\n--- ALU ---\n{op_a} {operator_plain} {op_b} = {res}"
-
+            
             elif stage == "MEM":
-                asm_lower = (asm_text or "").lower()
-                is_store = any(asm_lower.startswith(m) for m in ["sw", "sh", "sb"])
-                is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb"])
-                
-                mem_data = delayed_mem_values_by_cycle[cycle_idx]
-                addr = mem_data.get("addr")
-                wdata = mem_data.get("wdata")
-                
-                display = "MEM<br>"
-                if is_store:
-                    display += f"M[{addr}] = {wdata}"
-                    tooltip += f"\n--- Store ---\nAddr: {addr}\nData: {wdata}"
-                elif is_load:
-                    display += f"Load M[{addr}]"
-                    tooltip += f"\n--- Load ---\nAddr: {addr}"
-                else:
-                    display += "—"
+                 
+                 asm_lower = (asm_text or "").lower()
+                 is_store = any(asm_lower.startswith(m) for m in ["sw", "sh", "sb"])
+                 is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb"])
+                 mem_data = delayed_mem_values_by_cycle[cycle_idx]
+                 addr, wdata = mem_data.get("addr"), mem_data.get("wdata")
+                 display = "MEM<br>"
+                 if is_store:
+                     display += f"M[{addr}] = {wdata}"
+                     tooltip += f"\n--- Store ---\nAddr: {addr}\nData: {wdata}"
+                 elif is_load:
+                     display += f"Load M[{addr}]"
+                     tooltip += f"\n--- Load ---\nAddr: {addr}"
+                 else: display += "—"
 
             elif stage == "WB":
-                is_store = False
-                if asm_text and isinstance(asm_text, str):
-                    if asm_text.split()[0].lower() in ["sw", "sh", "sb"]:
-                        is_store = True
-                
-                if is_store:
-                    display = '---'
-                    hazard_info["is_skipped"] = True
-                else:
-                    wb_slot = delayed_wb_values_by_cycle[cycle_idx]
-                    wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
-                    wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
-                    if wb_data is not None and wb_rd:
-                        display = f"WB<br>x{wb_rd} = {wb_data}"
-                        tooltip += f"\nWB: x{wb_rd} = {wb_data}"
+                 
+                 is_store = False
+                 if asm_text and isinstance(asm_text, str):
+                     if asm_text.split()[0].lower() in ["sw", "sh", "sb"]: is_store = True
+                 if is_store:
+                     display = '---'
+                     hazard_info["is_skipped"] = True
+                 else:
+                     wb_slot = delayed_wb_values_by_cycle[cycle_idx]
+                     wb_data = wb_slot.get("wb_data") or wb_slot.get("data")
+                     wb_rd   = wb_slot.get("rd") or wb_slot.get("wb_rd")
+                     if wb_data is not None and wb_rd:
+                         display = f"WB<br>x{wb_rd} = {wb_data}"
+                         tooltip += f"\nWB: x{wb_rd} = {wb_data}"
 
-            # --- NEW: MERGED STALL LOGIC ---
+            # --- VISUAL STALL DETECTION (Smart Movement) ---
             is_stalled = False
-            # Check if THIS stage is stalled in THIS cycle
-            if stage == "IF" and current_stalls.get("IF") == 1:
-                is_stalled = True
-            elif stage == "ID" and current_stalls.get("ID") == 1:
-                is_stalled = True
-            # Add other stages here if your JSON supports STALL_EX, etc.
 
-            # --- WRITE FINAL DATA TO DICT ---
+            # Check if the instruction in this stage is identical to the PREVIOUS cycle.
+            if cycle_idx > 0:
+                prev_cycle_pc_in_same_stage = cycle_stage_pc[cycle_idx - 1].get(stage)
+
+                if prev_cycle_pc_in_same_stage is not None and prev_cycle_pc_in_same_stage == actual_pc:
+                    is_stalled = True
+                    # EXCEPTION: Startup Fetch Latency
+                    if stage == "IF" and cycle_idx < 3:
+                         stalls = stall_values_by_cycle[cycle_idx]
+                         s_if = stalls.get("IF", 0)
+                         s_id = stalls.get("ID", 0)
+                         
+                         # If early startup AND no explicit stall signal, hide it.
+                         if s_if == 0 and s_id == 0:
+                             is_stalled = False
+
+                    # Exception: If it's a ghost (exists in two stages), don't stall.
+                    
+                    downstream_map = {"IF": "ID", "ID": "EX", "EX": "MEM", "MEM": "WB"}
+                    downstream = downstream_map.get(stage)
+
+                    if downstream:
+                        # Check if I also moved downstream THIS cycle
+                        pc_in_downstream_curr_cycle = cycle_stage_pc[cycle_idx].get(downstream)
+                        if pc_in_downstream_curr_cycle == actual_pc:
+                            is_stalled = False
+
             pipeline_data_for_js[synth_pc][cycle_idx] = {
-                "stage": stage,
-                "tooltip": tooltip,
-                "display_text": display,
-                "hazard_info": hazard_info,
-                "is_hazard_source": is_source,
-                "is_stalled": is_stalled  # <--- Passed correctly now
+                "stage": stage, "tooltip": tooltip, "display_text": display,
+                "hazard_info": hazard_info, "is_hazard_source": is_source,
+                "is_stalled": is_stalled 
             }
+            
+        # --- CASE B: BUBBLE DETECTION ---
+        elif actual_pc is None or actual_pc == 0:
+            
+            is_bubble = False
+            
+            if stage == "EX" and cycle_idx > 0:
+                prev_cycle_stalls = stall_values_by_cycle[cycle_idx - 1]
+                if prev_cycle_stalls.get("ID") == 1: 
+                    is_bubble = True
+
+            if is_bubble:
+                
+                upstream_pc = cycle_stage_pc[cycle_idx - 1].get("ID")
+                
+                # Fallback: If logic shifted things weirdly, try current cycle
+                if upstream_pc is None:
+                    upstream_pc = cycle_stage_pc[cycle_idx].get("ID")
+
+                if upstream_pc in vcd_actual_to_synthetic_pc_map:
+                    synth_pc = vcd_actual_to_synthetic_pc_map[upstream_pc]
+                    bubble_data_for_js[synth_pc][cycle_idx] = stage
 
 pipeline_data_for_js_serializable = {str(pc): data for pc, data in pipeline_data_for_js.items()}
 
@@ -704,7 +827,29 @@ if all_missing_keys:
         missing_signals_html += '</div>'
 
 
+# --- DEBUG TOOL START ---
+print("\n" + "="*85)
+print(f" 🕵️‍♂️ PIPELINE TRACE DEBUGGER ")
+print("="*85)
+print(f"{'Cyc':<4} | {'S_IF':<4} {'S_ID':<4} | {'PC_IF':<8} {'PC_ID':<8} {'PC_EX':<8} {'PC_MEM':<8} {'PC_WB':<8}")
+print("-" * 85)
 
+def fmt_pc(val):
+    if val is None: return "   ."
+    return f"{val:x}"
+
+for i in range(num_cycles):
+    # Get stall values (0 or 1)
+    s_if = stall_values_by_cycle[i].get("IF", 0)
+    s_id = stall_values_by_cycle[i].get("ID", 0)
+
+    # Get the PC determined for each stage
+    pcs = cycle_stage_pc[i]
+    
+    # Only print cycles where something interesting happens (skip mostly empty start/end)
+    # or remove this 'if' to see all cycles.
+    if any(x is not None for x in pcs.values()): 
+        print(f"{i:<4} | {s_if:<4} {s_id:<4} | {fmt_pc(pcs.get('IF')):<8} {fmt_pc(pcs.get('ID')):<8} {fmt_pc(pcs.get('EX')):<8} {fmt_pc(pcs.get('MEM')):<8} {fmt_pc(pcs.get('WB')):<8}")
 
 
 
@@ -873,6 +1018,13 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     border: 2px solid red !important;
     animation: pulse-stall 1s infinite;
 }}
+.bubble-stage {{
+    background-color: #e0e0e0 !important;
+    border: 2px dashed #999 !important;
+    color: #666;
+    font-style: italic;
+    opacity: 0.7;
+}}
 
 @keyframes pulse-stall {{
     0% {{ transform: scale(1); }}
@@ -990,6 +1142,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     const searchBox = document.getElementById('searchBox');
 
     const memActivity = {mem_activity_js};   // inserted by Python string.format
+    const bubbleData = {bubble_data_js};
     const memActivityPanel = document.getElementById('mem-activity-panel');
     const memActivityTbody = document.getElementById('memActivityTbody');
     const toggleMemActivityBtn = document.getElementById('toggleMemActivityBtn');
@@ -1060,56 +1213,64 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
      }}
 
         function updatePipelineDisplay() {{
-            // Clear only the dynamic content (stage cells and highlights)
             document.querySelectorAll('.stage-cell').forEach(c => c.innerHTML = '');
             document.querySelectorAll('.instruction-label').forEach(l => l.classList.remove('hazard-source-highlight'));
-
-            
             
             Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {{
+                // 1. Draw the Main Instruction (The Stall)
                 const instrCycleData = cycleData[currentCycle];
                 if (instrCycleData) {{
                     if (showHazards && instrCycleData.is_hazard_source) {{
-                        document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
+                        const label = document.getElementById(`instr-label-${{synthPc}}`);
+                        if (label) label.classList.add('hazard-source-highlight');
                     }}
                     const stageIdx = {{IF:0, ID:1, EX:2, MEM:3, WB:4}}[instrCycleData.stage];
-                    
-                    
-                    const contentDiv = document.createElement('div');
                     const stageCell = document.getElementById(`stage-cell-${{synthPc}}-${{stageIdx}}`);
-                    if (!stageCell) return;
-                    contentDiv.className = 'stage-content';
-                    contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
-                    contentDiv.innerHTML = instrCycleData.display_text;
-                    // Assign an ID for the arrow drawing logic
-                    contentDiv.id = `content-${{synthPc}}-${{instrCycleData.stage}}`;
-
-                    // Highlight stalled stages
-                    if (instrCycleData.is_stalled) {{
-                        contentDiv.classList.add('stalled-stage');
-                        // Optional: Overlay text
-                        contentDiv.innerHTML = "<strong>STALL</strong><br>" + instrCycleData.display_text;
-                    }} else {{
-                        contentDiv.innerHTML = instrCycleData.display_text;
-                    }}
-
-                    // Only show the blue "forwarding destination" highlight when arrows are visible
-                    if (instrCycleData.stage === "EX") {{
-                        const hasForwarding = (instrCycleData.hazard_info.forwardA !== 0) || (instrCycleData.hazard_info.forwardB !== 0);
-                        if (showArrows && hasForwarding) {{
-                            contentDiv.classList.add('forwarding-destination-highlight');
-                        }}
-                    }}
-
-                    if (showHazards && instrCycleData.is_hazard_source) {{
-                        document.getElementById(`instr-label-${{synthPc}}`).classList.add('hazard-source-highlight');
-                    }}
                     
-                    const tooltipSpan = document.createElement('span');
-                    tooltipSpan.className = 'tooltip-text';
-                    tooltipSpan.textContent = instrCycleData.tooltip;
-                    contentDiv.appendChild(tooltipSpan);
-                    stageCell.appendChild(contentDiv);
+                    if (stageCell) {{
+                        const contentDiv = document.createElement('div');
+                        contentDiv.className = 'stage-content';
+                        contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
+                        contentDiv.id = `content-${{synthPc}}-${{instrCycleData.stage}}`;
+
+                        if (instrCycleData.is_stalled) {{
+                            contentDiv.classList.add('stalled-stage');
+                            contentDiv.innerHTML = "<strong>STALL</strong><br>" + instrCycleData.display_text;
+                        }} else {{
+                            contentDiv.innerHTML = instrCycleData.display_text;
+                        }}
+
+                        if (instrCycleData.stage === "EX") {{
+                            const hasForwarding = (instrCycleData.hazard_info.forwardA !== 0) || (instrCycleData.hazard_info.forwardB !== 0);
+                            if (showArrows && hasForwarding) contentDiv.classList.add('forwarding-destination-highlight');
+                        }}
+                        
+                        const tooltipSpan = document.createElement('span');
+                        tooltipSpan.className = 'tooltip-text';
+                        tooltipSpan.textContent = instrCycleData.tooltip;
+                        contentDiv.appendChild(tooltipSpan);
+                        stageCell.appendChild(contentDiv);
+                    }}
+                }}
+
+                // 2. Draw the Bubble (The Gap) - NEW LOGIC
+                const bubbleStage = bubbleData[synthPc] ? bubbleData[synthPc][currentCycle] : null;
+                if (bubbleStage) {{
+                    const stageIdx = {{IF:0, ID:1, EX:2, MEM:3, WB:4}}[bubbleStage];
+                    const stageCell = document.getElementById(`stage-cell-${{synthPc}}-${{stageIdx}}`);
+                    
+                    if (stageCell) {{
+                        const contentDiv = document.createElement('div');
+                        contentDiv.className = 'stage-content bubble-stage';
+                        contentDiv.innerHTML = "Bubble<br>(NOP)";
+                        
+                        const tooltipSpan = document.createElement('span');
+                        tooltipSpan.className = 'tooltip-text';
+                        tooltipSpan.textContent = "Pipeline Bubble\\nInserted due to stall in previous stage";
+                        contentDiv.appendChild(tooltipSpan);
+                        
+                        stageCell.appendChild(contentDiv);
+                    }}
                 }}
             }});
         }}
@@ -1416,6 +1577,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     reg_highlight_data_js=json.dumps(reg_highlight_data_by_cycle),
     missing_signals_html=missing_signals_html,
     mem_activity_js=mem_activity_js,
+    bubble_data_js=json.dumps(bubble_data_for_js)
  
 )
 
