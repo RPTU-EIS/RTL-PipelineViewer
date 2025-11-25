@@ -205,10 +205,7 @@ mem_signals = resolve_signals_with_log(mem_signals_raw, vcd, "MEM", vcd_filename
 stall_signals = resolve_signals_with_log(stall_signals_raw, vcd, "Stall", vcd_filename=VCD_FILE)
 
 
-print("\n🧩 DEBUG: MEM signal resolution result:")
-for k, v in mem_signals.items():
-    print(f"   {k:15} → {v}")
-print("🔹 End of MEM signal check\n")
+
 
 wb_signals = resolve_signals_with_log(wb_signals_raw, vcd, "WB", vcd_filename=VCD_FILE)
 hazard_signals = resolve_signals_with_log(hazard_signals_raw, vcd, "Hazard", vcd_filename=VCD_FILE)
@@ -247,9 +244,7 @@ print(f"Detected {num_cycles} clock cycles.")
 
 
 def extract_signal_at_cycles(signal_name, default_val=None, base=10):
-    if signal_name not in vcd.signals:
-        #print(f"⚠️ Signal {signal_name} not found in VCD. Using default value {default_val}.")
-        return [default_val] * num_cycles
+    
     
     tv_sorted = sorted(vcd[signal_name].tv, key=lambda x: x[0])
     values = []
@@ -343,7 +338,7 @@ stall_values_raw = [{} for _ in range(num_cycles)]
 extract_signals_group(stall_signals, default_val=0, base=2, store_to=stall_values_raw)
 
 
-#print(f"✅ Loaded {len(hazard_signals)} hazard signals, {len(ex_signals)} EX signals, {len(wb_signals)} WB signals")
+
 
 
 
@@ -535,7 +530,7 @@ for i in range(num_cycles):
             # Normal Operation
             cycle_stage_pc[i][stage] = raw_val
 
-        # --- DUPLICATE FIX (The "0x24" Problem) ---
+    
         # If IF holds the same PC as ID (Hardware PC freeze), peek at the NEXT cycle 
         # to see what the actual next instruction is.
         if stage == "IF" and downstream_stage:
@@ -564,13 +559,13 @@ for actual_pc in all_pcs_from_vcd:
         synthetic_pc_counter += 4
 
 # --- Prepare Data for HTML/JS ---
-# --- FINAL FIX: Prepare Data for HTML/JS using Movement Detection ---
+# Prepare Data for HTML/JS using Movement Detection ---
 pipeline_data_for_js = defaultdict(lambda: [None] * num_cycles)
 bubble_data_for_js = defaultdict(lambda: [None] * num_cycles)
 
 for cycle_idx in range(num_cycles):
     
-    # 1. Get Hazard Data (Keep this)
+    # 1. Get Hazard Data 
     current_hazard_data = delayed_hazard_data_by_cycle[cycle_idx]
     forwardA = current_hazard_data.get("forwardA", 0)
     forwardB = current_hazard_data.get("forwardB", 0)
@@ -579,7 +574,7 @@ for cycle_idx in range(num_cycles):
     if forwardA == 1 or forwardB == 1: hazard_sources.add(cycle_stage_pc[cycle_idx].get("MEM"))
     if forwardA == 2 or forwardB == 2: hazard_sources.add(cycle_stage_pc[cycle_idx].get("WB"))
     
-    # 2. Iterate through stages
+    
     # 2. Iterate through stages
     for stage in ["IF", "ID", "EX", "MEM", "WB"]:
         actual_pc = cycle_stage_pc[cycle_idx].get(stage)
@@ -640,14 +635,31 @@ for cycle_idx in range(num_cycles):
                  is_load  = any(asm_lower.startswith(m) for m in ["lw", "lh", "lb"])
                  mem_data = delayed_mem_values_by_cycle[cycle_idx]
                  addr, wdata = mem_data.get("addr"), mem_data.get("wdata")
+
+                 rdata = mem_data.get("rdata")
+                 hazard_data = delayed_hazard_data_by_cycle[cycle_idx]
+                 mem_rd = hazard_data.get("rd_mem_addr")
+
+
                  display = "MEM<br>"
                  if is_store:
                      display += f"M[{addr}] = {wdata}"
                      tooltip += f"\n--- Store ---\nAddr: {addr}\nData: {wdata}"
                  elif is_load:
                      display += f"Load M[{addr}]"
-                     tooltip += f"\n--- Load ---\nAddr: {addr}"
-                 else: display += "—"
+                     
+                     
+                     if mem_rd is not None and mem_rd != 0:
+                         # Format value (hex or decimal)
+                         val_fmt = str(rdata) if isinstance(rdata, int) else str(rdata)
+                         if val_fmt == "None": val_fmt = "?"
+                         
+                         display += f"<br>x{mem_rd} = {val_fmt}"
+                         tooltip += f"\nTarget: x{mem_rd} = {val_fmt}"
+                     else:
+                         tooltip += f"\n--- Load ---\nAddr: {addr}"
+                 else: 
+                     display += "—"
 
             elif stage == "WB":
                  
@@ -773,22 +785,23 @@ for cycle_idx in range(num_cycles):
 
     # Determine type
     is_store = wr_flag
-    is_load = 1 if rdata != 0 else 0 
+    #is_load = 1 if rdata != 0 else 0 
 
-    #is_load = rd_flag and not wr_flag
     
-    print(f"  rdata={rdata} → is_load={is_load}")
-          
+    # CLEANUP: If writing, force Read Data to None/N/A in the JSON
+    display_rdata = "—" if is_store else rdata
+    # CLEANUP: If reading, force Write Data to None/N/A
+    display_wdata = wdata if is_store else "—"
 
     mem_activity_by_cycle.append({
         "cycle": cycle_idx,
         "addr": addr,
-        "wdata": wdata,
-        "rdata": rdata,
+        "wdata": display_wdata,  # Use the cleaned value
+        "rdata": display_rdata,  # Use the cleaned value
         "wr_en": wr_flag,
-        "rd_en": rd_flag,
+        "rd_en": False, # Or derive from signals if available
         "is_store": is_store,
-        "is_load": is_load
+        "is_load": not is_store # Simplification
     })
 
 # Add it to the HTML context (JSON serializable)
@@ -1433,60 +1446,39 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     }}
 
     function renderMemActivityForCycle(cycle) {{
-    memActivityTbody.innerHTML = ''; // clear
-
-    const entry = memActivity[cycle];
-    if (!entry) {{
-        memActivityTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:10px;">No mem signals resolved for this cycle</td></tr>';
-        return;
+        memActivityTbody.innerHTML = '';
+        const entry = memActivity[cycle];
+        
+        if (!entry) {{ 
+            memActivityTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No data</td></tr>'; 
+            return; 
+        }}
+        
+        const tr = document.createElement('tr');
+        
+        // Cycle
+        let td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = entry.cycle; tr.appendChild(td);
+        
+        // Address
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = (entry.addr !== undefined && entry.addr !== null) ? entry.addr : 'N/A'; tr.appendChild(td);
+        
+        // Write Data (Handle "—" logic passed from Python)
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = (entry.wdata !== undefined && entry.wdata !== null) ? entry.wdata : '—'; tr.appendChild(td);
+        
+        // Read Data (Handle "—" logic passed from Python)
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        // Check for the explicit exclusion from Python, otherwise show val
+        td.textContent = (entry.rdata !== undefined && entry.rdata !== null) ? entry.rdata : '—'; tr.appendChild(td);
+        
+        // WrEn
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = entry.wr_en ? '1' : '0'; tr.appendChild(td);
+        
+        memActivityTbody.appendChild(tr);
     }}
-
-    const tr = document.createElement('tr');
-
-    // cycle
-    let td = document.createElement('td');
-    td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.style.textAlign = 'center';
-    td.textContent = entry.cycle;
-    tr.appendChild(td);
-
-    // type
-    /*td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.is_store ? 'STORE' : (entry.is_load ? 'LOAD' : 'NONE');
-    tr.appendChild(td);*/
-
-    // address
-    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.addr === undefined || entry.addr === null ? 'N/A' : entry.addr;
-    td.style.textAlign = 'center';
-    tr.appendChild(td);
-
-    // wdata
-    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.wdata === undefined || entry.wdata === null ? 'N/A' : entry.wdata;
-    td.style.textAlign = 'center';
-    tr.appendChild(td);
-
-    // rdata
-    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.rdata === undefined || entry.rdata === null ? 'N/A' : entry.rdata;
-    td.style.textAlign = 'center';
-    tr.appendChild(td);
-
-    // wr_en
-    td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.wr_en ? '1' : '0';
-    td.style.textAlign = 'center';
-    tr.appendChild(td);
-
-    // rd_en
-    /*td = document.createElement('td'); td.style.border = '1px solid #ddd'; td.style.padding = '8px';
-    td.textContent = entry.rd_en ? '1' : '0';
-    td.style.textAlign = 'center';
-    tr.appendChild(td);*/
-
-    memActivityTbody.appendChild(tr);
-}}
 
 
 
