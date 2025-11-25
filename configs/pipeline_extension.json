@@ -21,7 +21,7 @@
   "WB_RD": ["PipelinedRV32I.core.WB.io_rd"],
   "WB_DATA": [ "PipelinedRV32I.core.WB.io_check_res"],
 
-  "MEM_ADDR": [ "PipelinedRV32I.core.MEM.io_dmem_addr", "PipelinedRV32I.core.MEM.io_addr"],
+  "MEM_ADDR": [ "PipelinedRV32I.core.MEM.io_addr"],
   "MEM_RDATA": ["PipelinedRV32I.core.MEM.io_dmem_rData", "PipelinedRV32I.core.MEM.io_readData"  ],
   "MEM_WDATA": ["PipelinedRV32I.core.MEM.io_dmem_wData", "PipelinedRV32I.core.MEM.io_writeData"  ],
   "MEM_WR_EN": ["PipelinedRV32I.core.MEM.io_dmem_wrEn", "PipelinedRV32I.core.MEM.io_memWr"  ],
@@ -30,14 +30,15 @@
   
   "HAZARD_RS1_ADDR": ["PipelinedRV32I.core.IDBarrier.io_outRS1"],
   "HAZARD_RS2_ADDR": ["PipelinedRV32I.core.IDBarrier.io_outRS2"],
-
   "HAZARD_OPCODE": ["PipelinedRV32I.core.ForwardingUnit_inst.opcode"],
-
-
   "HAZARD_RD_MEM_ADDR": ["PipelinedRV32I.core.EXBarrier.io_outRD"],
   "HAZARD_RD_WB_ADDR": ["PipelinedRV32I.core.MEMBarrier.io_outRD"],
   "HAZARD_FORWARD_A": ["PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpA_ctrl"],
   "HAZARD_FORWARD_B": ["PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpB_ctrl"],
 
-  "REG_TEMPLATE": [ "PipelinedRV32I.core.RegFile_inst.RegFile_inst_{i}"]
+  "REG_TEMPLATE": [ "PipelinedRV32I.core.RegFile_inst.RegFile_inst_{i}"],
+
+  
+  "STALL_IF": ["PipelinedRV32I.core.HazardDetectionUnit_inst.io_if_stall"],
+  "STALL_ID": ["PipelinedRV32I.core.HazardDetectionUnit_inst.io_id_stall"]
 }
