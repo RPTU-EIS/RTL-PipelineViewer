@@ -50,6 +50,8 @@ CLOCK_SIGNAL = None
 parser = argparse.ArgumentParser(description="Generate an HTML animation for a pipelined RISC-V processor from a VCD file.")
 parser.add_argument("vcd_file", nargs='?', default=None, help="Optional: Path to the VCD file to process.")
 
+parser.add_argument("-c", "--config", default="pipeline", help="Optional: Name of the JSON config file (default: pipeline).")
+
 args = parser.parse_args()
 
 
@@ -101,8 +103,13 @@ print("-" * 50)
 
 # --- Utility to resolve signals from multiple fallback paths ---
 def resolve_signal(signal_names, vcd):
+    # FIX: Handle case where config entry is missing (None)
+    if signal_names is None:
+        return None
+        
     if isinstance(signal_names, str):
         signal_names = [signal_names]
+        
     for name in signal_names:
         if name in vcd.signals:
             return name
@@ -147,8 +154,28 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
 
 
 
-# --- Hardcoded Config Path ---
-CONFIG_FILE = "configs/pipeline_extension.json"
+# --- Dynamic Config Path Logic ---
+config_input = args.config
+
+# 1. Automatically add .json extension if missing
+if not config_input.endswith(".json"):
+    config_input += ".json"
+
+# 2. Determine the path with Smart Fallback
+if os.path.exists(config_input):
+    # Priority 1: User provided an exact, valid path
+    CONFIG_FILE = config_input
+elif os.path.exists(os.path.join("configs", config_input)):
+    # Priority 2: User provided just the name (e.g., "pipeline_base"), look in 'configs/'
+    CONFIG_FILE = os.path.join("configs", config_input)
+elif os.path.exists(os.path.join("configs", os.path.basename(config_input))):
+    # Priority 3: Smart Fix (e.g., user typed "config/file.json" but file is in "configs/file.json")
+    CONFIG_FILE = os.path.join("configs", os.path.basename(config_input))
+else:
+    # Default to the input so the error handler below prints the correct missing filename
+    CONFIG_FILE = config_input 
+    
+print(f"⚙️  Using Configuration: {CONFIG_FILE}")
 
 # --- Load Signal Map ---
 try:
@@ -280,7 +307,15 @@ def extract_signal_at_cycles(signal_name, default_val=None, base=10):
 
 
 
-instr_vals = extract_signal_at_cycles("PipelinedRV32I.core.IDBarrier.io_outInstr_REG", default_val=0, base=2)
+# --- FIX: Use resolved signal name instead of hardcoded string ---
+id_instr_signal = instruction_signals.get("ID")
+
+if id_instr_signal:
+    instr_vals = extract_signal_at_cycles(id_instr_signal, default_val=0, base=2)
+else:
+    # Fallback if the signal is completely missing
+    print("⚠️ ID Instruction signal missing. Using default 0.")
+    instr_vals = [0] * num_cycles
 
 
 
