@@ -1,0 +1,44 @@
+{
+  "STAGE_IF": ["PipelinedRV32I.core.IFBarrier.io_outPC"],
+  "STAGE_ID": ["PipelinedRV32I.core.IDBarrier.io_outPC"],
+  "STAGE_EX": ["PipelinedRV32I.core.EXBarrier.io_outPC"],
+  "STAGE_MEM": ["PipelinedRV32I.core.MEMBarrier.io_outPC"],
+  "STAGE_WB": ["PipelinedRV32I.core.WBBarrier.io_outPC"],
+
+  "INSTR_IF": ["PipelinedRV32I.core.IFBarrier.io_outInstr"],
+  "INSTR_ID": ["PipelinedRV32I.core.IDBarrier.io_outInstr"],
+  "INSTR_EX": ["PipelinedRV32I.core.EXBarrier.io_outInstr"],
+  "INSTR_MEM": ["PipelinedRV32I.core.MEMBarrier.io_outInstr"],
+  "INSTR_WB": ["PipelinedRV32I.core.WBBarrier.io_outInstr"],
+
+
+  "EX_OPERAND_A": [ "PipelinedRV32I.core.EX.aluOpA"],
+  "EX_OPERAND_B": ["PipelinedRV32I.core.EX.aluOpB"],
+  "EX_ALU_RESULT": [ "PipelinedRV32I.core.EX.io_aluResult"],
+  "EX_UOP": [ "PipelinedRV32I.core.EX.io_ALUOp"],
+  
+  
+  "WB_RD": ["PipelinedRV32I.core.WB.io_rd"],
+  "WB_DATA": [ "PipelinedRV32I.core.WB.io_check_res"],
+
+  "MEM_ADDR": [ "PipelinedRV32I.core.MEM.io_addr"],
+  "MEM_RDATA": ["PipelinedRV32I.core.MEM.io_dmem_rData", "PipelinedRV32I.core.MEM.io_readData"  ],
+  "MEM_WDATA": ["PipelinedRV32I.core.MEM.io_dmem_wData", "PipelinedRV32I.core.MEM.io_writeData"  ],
+  "MEM_WR_EN": ["PipelinedRV32I.core.MEM.io_dmem_wrEn", "PipelinedRV32I.core.MEM.io_memWr"  ],
+  "MEM_RD_EN": ["PipelinedRV32I.core.MEMBarrier.io_outRD"  ],
+
+  
+  "HAZARD_RS1_ADDR": ["PipelinedRV32I.core.IDBarrier.io_outRS1"],
+  "HAZARD_RS2_ADDR": ["PipelinedRV32I.core.IDBarrier.io_outRS2"],
+  "HAZARD_OPCODE": ["PipelinedRV32I.core.ForwardingUnit_inst.opcode"],
+  "HAZARD_RD_MEM_ADDR": ["PipelinedRV32I.core.EXBarrier.io_outRD"],
+  "HAZARD_RD_WB_ADDR": ["PipelinedRV32I.core.MEMBarrier.io_outRD"],
+  "HAZARD_FORWARD_A": ["PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpA_ctrl"],
+  "HAZARD_FORWARD_B": ["PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpB_ctrl"],
+
+  "REG_TEMPLATE": [ "PipelinedRV32I.core.RegFile_inst.RegFile_inst_{i}"],
+
+  
+  "STALL_IF": ["PipelinedRV32I.core.HazardDetectionUnit_inst.io_if_stall"],
+  "STALL_ID": ["PipelinedRV32I.core.HazardDetectionUnit_inst.io_id_stall"]
+}
