@@ -71,7 +71,7 @@ python riscv_pipeline_visualizer.py your_vcd_file.vcd
 
 Optional arguments:
 ```bash
--c, --config   JSON configuration file (default: pipeline_extension)
+-c, --config   JSON configuration file (default: pipeline)
 ```
 
 Examples:
@@ -156,9 +156,9 @@ pip install vcdvcd capstone pandas
 ├── generate_pipeline_matrix.py
 ├── multicycle_riscv_visualizer.py
 ├── configs/
-│   ├── pipeline_extension.json
-│   ├── pipeline_base.json
-│   └── pipeline_universal.json
+│   ├── multicycle.json
+│   ├── pipeline.json
+│   └── example.json
 ├── images/
 │   ├── Pipiline_Visualization.png
 │   └── Multistage_Visualization.png
@@ -191,6 +191,6 @@ This project is intended for **educational and research purposes**.
 
 ---
 
-## 🙌 Acknowledgements
+##  Acknowledgements
 
 Inspired by RISC-V teaching laboratories and debugging workflows based on **Chisel**, **Verilator**, and **GTKWave**.
