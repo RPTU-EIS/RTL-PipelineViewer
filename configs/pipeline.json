@@ -1,0 +1,57 @@
+{
+  "STAGE_IF": [    "PipelinedRV32I.core.IFBarrier.io_outPC", "HazardDetectionRV32I.core.IFBarrier.io_pc_out","PipelinedRV32I.core.ifBarrier.io_pc_out"],
+  "STAGE_ID": [    "PipelinedRV32I.core.IDBarrier.io_outPC",    "HazardDetectionRV32I.core.IDBarrier.pcReg",    "PipelinedRV32I.core.idBarrier.pcReg"  ],
+  "STAGE_EX": [    "PipelinedRV32I.core.EXBarrier.io_outPC",    "HazardDetectionRV32I.core.EXBarrier.pcReg",    "PipelinedRV32I.core.exBarrier.pcReg"  ],
+  "STAGE_MEM": [    "PipelinedRV32I.core.MEMBarrier.io_outPC",    "HazardDetectionRV32I.core.MEMBarrier.pcReg",    "PipelinedRV32I.core.memBarrier.pcReg"  ],
+  "STAGE_WB": [    "PipelinedRV32I.core.WBBarrier.io_outPC",    "HazardDetectionRV32I.core.WBBarrier.pcReg",    "PipelinedRV32I.core.wbBarrier.pcReg"  ],
+
+
+  "INSTR_IF": [    "PipelinedRV32I.core.IFBarrier.io_outInstr",    "HazardDetectionRV32I.core.IFBarrier.io_inst_out",    "PipelinedRV32I.core.ifBarrier.io_inst_out"  ],
+  "INSTR_ID": [    "PipelinedRV32I.core.IDBarrier.io_outInstr",    "HazardDetectionRV32I.core.IDBarrier.instReg",    "PipelinedRV32I.core.idBarrier.instReg"  ],
+  "INSTR_EX": [    "PipelinedRV32I.core.EXBarrier.io_outInstr",    "HazardDetectionRV32I.core.EXBarrier.instReg",    "PipelinedRV32I.core.exBarrier.instReg"  ],
+  "INSTR_MEM": [    "PipelinedRV32I.core.MEMBarrier.io_outInstr",    "HazardDetectionRV32I.core.MEMBarrier.instReg",    "PipelinedRV32I.core.memBarrier.instReg"  ],
+  "INSTR_WB": [    "PipelinedRV32I.core.WBBarrier.io_outInstr",    "HazardDetectionRV32I.core.WBBarrier.instReg",    "PipelinedRV32I.core.wbBarrier.instReg"  ],
+
+
+  "EX_OPERAND_A": [    "PipelinedRV32I.core.EX.aluOpA",    "HazardDetectionRV32I.core.EX.io_operandA",    "PipelinedRV32I.core.exStage.io_data1_in"  ],
+  "EX_OPERAND_B": [    "PipelinedRV32I.core.EX.aluOpB",    "HazardDetectionRV32I.core.EX.io_operandB",    "PipelinedRV32I.core.exStage.operandB"  ],
+  "EX_ALU_RESULT": [    "PipelinedRV32I.core.EX.io_aluResult",    "HazardDetectionRV32I.core.EX.io_aluResult",    "PipelinedRV32I.core.exStage.aluResult"  ],
+  "EX_UOP": [    "PipelinedRV32I.core.EX.io_ALUOp",    "HazardDetectionRV32I.core.EX.io_uop",    "PipelinedRV32I.core.exStage.io_upo_in"  ],
+
+
+  "MEM_ADDR": [    "PipelinedRV32I.core.MEM.io_addr",    "PipelinedRV32I.core.memStage.io_addr",    "HazardDetectionRV32I.core.MEM.io_addr"  ],
+  "MEM_RDATA": [    "PipelinedRV32I.core.MEM.io_dmem_rData",    "PipelinedRV32I.core.MEM.io_readData",    "HazardDetectionRV32I.core.MEM.io_rdata"  ],
+  "MEM_WDATA": [    "PipelinedRV32I.core.MEM.io_dmem_wData",    "PipelinedRV32I.core.MEM.io_writeData",    "HazardDetectionRV32I.core.MEM.io_wdata"  ],
+  "MEM_WR_EN": [    "PipelinedRV32I.core.MEM.io_dmem_wrEn",    "PipelinedRV32I.core.MEM.io_memWr",    "HazardDetectionRV32I.core.MEM.io_memWr"  ],
+  "MEM_RD_EN": [    "PipelinedRV32I.core.MEMBarrier.io_outRD",    "HazardDetectionRV32I.core.MEMBarrier.io_outRD"  ],
+
+
+  "WB_RD": [    "PipelinedRV32I.core.WB.io_rd",    "HazardDetectionRV32I.core.WB.io_rd"  ],
+  "WB_DATA": [    "PipelinedRV32I.core.WB.io_check_res",    "HazardDetectionRV32I.core.WB.io_check_res",    "PipelinedRV32I.core.io_check_res"  ],
+
+
+  "HAZARD_RS1_ADDR": [    "PipelinedRV32I.core.IDBarrier.io_outRS1",    "HazardDetectionRV32I.core.IDBarrier.io_outRS1",    "PipelinedRV32I.core.idBarrier.rs1"  ],
+  "HAZARD_RS2_ADDR": [    "PipelinedRV32I.core.IDBarrier.io_outRS2",    "HazardDetectionRV32I.core.IDBarrier.io_outRS2",    "PipelinedRV32I.core.idBarrier.rs2"  ],
+  "HAZARD_OPCODE": [    "PipelinedRV32I.core.ForwardingUnit_inst.opcode",    "HazardDetectionRV32I.core.ID.opcode",    "PipelinedRV32I.core.idStage.opcode"  ],
+  "HAZARD_RD_MEM_ADDR": [    "PipelinedRV32I.core.EXBarrier.io_outRD",    "HazardDetectionRV32I.core.EXBarrier.io_outRD"  ],
+  "HAZARD_RD_WB_ADDR": [    "PipelinedRV32I.core.MEMBarrier.io_outRD",    "HazardDetectionRV32I.core.MEMBarrier.io_outRD"  ],
+  "HAZARD_FORWARD_A": [    "PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpA_ctrl",    "HazardDetectionRV32I.core.FU.io_forwardA"  ],
+  "HAZARD_FORWARD_B": [    "PipelinedRV32I.core.ForwardingUnit_inst.io_aluOpB_ctrl",    "HazardDetectionRV32I.core.FU.io_forwardB"  ],
+
+
+  "STALL_IF": [    "PipelinedRV32I.core.HazardDetectionUnit_inst.io_if_stall",    "HazardDetectionRV32I.core.HDU.io_stall_if"  ],
+  "STALL_ID": [    "PipelinedRV32I.core.HazardDetectionUnit_inst.io_id_stall",    "HazardDetectionRV32I.core.HDU.io_stall_id"  ],
+
+
+  "BRANCH_TAKEN": [    "PipelinedRV32I.core.EXBarrier.io_outPCSrc",    "PipelinedRV32I.core.EX.io_PCSrc",    "HazardDetectionRV32I.core.EX.io_branchTaken"  ],
+  "BRANCH_TARGET": [    "PipelinedRV32I.core.EXBarrier.io_outPC_JB",    "PipelinedRV32I.core.EX.io_PC_JB"  ],
+  "FLUSH_IF": [     "PipelinedRV32I.core.IFBarrier.io_flush",    "HazardDetectionRV32I.core.IFBarrier.io_flush"  ],
+  "FLUSH_ID": [    "PipelinedRV32I.core.IDBarrier.io_flush",    "HazardDetectionRV32I.core.IDBarrier.io_flush"  ],
+  "FLUSH_EX": [    "PipelinedRV32I.core.EXBarrier.io_flush",    "HazardDetectionRV32I.core.EXBarrier.io_flush"  ],
+
+
+  "PC_WRITE": [    "PipelinedRV32I.core.IF.io_PCWrite",    "HazardDetectionRV32I.core.IF.io_pcWrite"  ],
+
+  
+  "REG_TEMPLATE": [    "PipelinedRV32I.core.RegFile_inst.RegFile_inst_{i}",    "HazardDetectionRV32I.core.regFile.regFile_{i}",    "PipelinedRV32I.core.idStage.rf.regFile_{i}"  ]
+}
