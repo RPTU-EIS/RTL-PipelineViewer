@@ -295,7 +295,14 @@ def safe_extract_signal(signal_dict, signal_name, default_val=0, base=2):
 # Helper to extract signal values at each rising edge
 def extract_signals_group(signal_dict, default_val, base, store_to, postprocess_fn=None):
     for key, signal_name in signal_dict.items():
-        values = extract_signal_at_cycles(signal_name, default_val=default_val, base=base)
+        # --- FIX: Check if signal exists before extracting ---
+        if signal_name is None:
+            # If signal is missing, fill with default values immediately
+            values = [default_val] * num_cycles
+        else:
+            # If signal exists, extract real data from VCD
+            values = extract_signal_at_cycles(signal_name, default_val=default_val, base=base)
+            
         for cycle_idx, val in enumerate(values):
             if postprocess_fn:
                 val = postprocess_fn(val)
@@ -565,7 +572,7 @@ for i in range(num_cycles):
                  if anchor_ex is None and "EX" in raw_stage_pcs:
                      anchor_ex = raw_stage_pcs["EX"][i]
 
-                 if anchor_ex is not None:
+                 if anchor_ex is not None and anchor_ex > 0:
                      ghost_pc = None
                      # Math: IF is always EX + 8
                      if stage == "ID": ghost_pc = anchor_ex + 4
@@ -690,6 +697,9 @@ for cycle_idx in range(num_cycles):
             if stage == "EX":
                 hazard_info["forwardA"] = forwardA
                 hazard_info["forwardB"] = forwardB
+                # Initialize target to None so JS doesn't crash if undefined
+                hazard_info["branch_target_synth"] = None 
+
                 if forwardA == 1 or forwardB == 1:
                     hazard_info["source_pc_mem"] = vcd_actual_to_synthetic_pc_map.get(cycle_stage_pc[cycle_idx].get("MEM"))
                 if forwardA == 2 or forwardB == 2:
@@ -715,6 +725,9 @@ for cycle_idx in range(num_cycles):
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
 
                     if is_flushing_now:
+                        # ✅ SAVE TARGET FOR JS ARROW (Only if taken)
+                        hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
+                        
                         display = f"<strong>Taken</strong><br>⟶ {target_display}"
                         tooltip += f"\nDecision: Taken (Flush Detected)\nTarget: {target_display}"
                     else:
@@ -729,11 +742,15 @@ for cycle_idx in range(num_cycles):
                     target_val = target if target is not None else 0
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
                     
+                    # ✅ SAVE TARGET FOR JS ARROW (Always for Jumps)
+                    hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
+
                     display = f"<strong>Jump</strong><br>⟶ {target_display}"
                     tooltip += f"\nOperation: Unconditional Jump\nTarget: {target_display}"
 
                 else:
                     # --- STANDARD ALU DISPLAY (Arithmetic) ---
+                    # (Keep your existing ALU logic here)
                     operator_map = {"addi": "+", "add": "+", "sub": "-", "and": "&", "or": "|", "xor": "^", "sll": "<<", "srl": ">>"}
                     operator_plain = operator_map.get(mnemonic, mnemonic.upper())
                     
@@ -933,67 +950,13 @@ if all_missing_keys:
         missing_signals_html += '</div>'
 
 
-print("\n" + "="*50)
-print(" 🕵️‍♂️ GHOST INSTRUCTION DEBUGGER")
-print("="*50)
-# Use one of your known EX PCs (binary 28)
-debug_ex_pc = 28 # (00011100 binary)
-debug_id_pc = debug_ex_pc + 4
-debug_if_pc = debug_ex_pc + 8
 
-print(f"Checking neighborhood of EX PC: {debug_ex_pc}")
-print(f"Expect ID at: {debug_id_pc}")
-print(f"Expect IF at: {debug_if_pc} (This is the missing one)")
 
-for pc in [debug_ex_pc, debug_id_pc, debug_if_pc]:
-    status = "✅ FOUND" if pc in actual_pc_to_instr_raw else "❌ MISSING"
-    hex_str = actual_pc_to_instr_hex_display.get(pc, "N/A")
-    print(f"   PC {pc} (0x{pc:x}) : {status} -> Instr: {hex_str}")
 
-print("\nIf PC+8 is MISSING, the VCD parser never saw it stabilize.")
-print("If PC+8 is FOUND, the 'Step B' logic fix above will solve it.")
-print("="*50 + "\n")
 
-# --- DEBUG TOOL: CONTROL SIGNAL INSPECTOR ---
-print("\n" + "="*95)
-print(f" 🕵️‍♂️ CONTROL SIGNAL INSPECTOR ")
-print("="*95)
-print(f"{'Cyc':<4} | {'Br_Taken':<8} | {'Br_Target':<12} | {'Flush_IF':<8} | {'Flush_ID':<8} | {'EX_PC':<10} | {'Instruction in EX'}")
-print("-" * 95)
 
-for i in range(num_cycles):
-    # 1. Get Control Values for this cycle
-    ctrl = control_values_by_cycle[i]
-    taken = ctrl.get("branch_taken")
-    target = ctrl.get("branch_target")
-    flush_if = ctrl.get("flush_if")
-    flush_id = ctrl.get("flush_id")
 
-    # 2. Get the PC currently in the EX stage (where branches are resolved)
-    # We try to get the calculated PC first, fallback to raw if needed
-    ex_pc = cycle_stage_pc[i].get("EX")
-    
-    # 3. Get the instruction mnemonic for context
-    instr_str = ""
-    if ex_pc is not None and ex_pc in actual_pc_to_disassembled_instr:
-        instr_str = actual_pc_to_disassembled_instr[ex_pc].get("asm", "")
 
-    # 4. Format Target (handle None or 0)
-    target_str = f"0x{target:x}" if target is not None else "None"
-    if target == 0: target_str = "0"
-
-    # 5. Filter: Only print if there is activity (Branch taken OR Flush OR Instruction in EX)
-    #    This prevents printing hundreds of empty cycles.
-    has_activity = (taken == 1) or (flush_if == 1) or (flush_id == 1) or (ex_pc is not None)
-    
-    if has_activity:
-        # Highlight rows where Branch is Taken with a pointer <--
-        pointer = " 🟢 TAKEN" if taken == 1 else ""
-        if flush_if == 1 or flush_id == 1: pointer += " 🔴 FLUSH"
-        
-        print(f"{i:<4} | {str(taken):<8} | {target_str:<12} | {str(flush_if):<8} | {str(flush_id):<8} | {str(ex_pc):<10} | {instr_str:<20}{pointer}")
-
-print("="*95 + "\n")
 
 
 # --- HTML Generation ---
@@ -1546,34 +1509,69 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
 
     
     // --- NEW: Function to draw a single arrow ---
-    function drawArrow(fromElem, toElem) {{
+    // --- UPDATED: Smarter Arrow Drawing Logic with Double Brackets ---
+    function drawArrow(fromElem, toElem, type) {{
         if (!fromElem || !toElem) return;
         const svgRect = arrowSvg.getBoundingClientRect();
         const fromRect = fromElem.getBoundingClientRect();
         const toRect = toElem.getBoundingClientRect();
 
-        const startX = fromRect.left + fromRect.width / 2 - svgRect.left;
-        const startY = fromRect.top + fromRect.height / 2 - svgRect.top;
-        const endX = toRect.left + toRect.width / 2 - svgRect.left;
-        const endY = toRect.top - svgRect.top; // Point to the TOP of the cell
-
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        // A bezier curve for a nice arc
-        const d = `M ${{startX}},${{startY}} C ${{startX}},${{startY - 40}} ${{endX}},${{endY - 40}} ${{endX}},${{endY}}`;
-        path.setAttribute('d', d);
-
+        let startX, startY, endX, endY, d;
 
         if (type === "branch") {{
+            // Branch: Smooth S-Curve from Left edge of Source to Right edge of Target
+            
+            // Start: Left edge of the "Taken" box (Vertical Center)
+            startX = fromRect.left - svgRect.left; 
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            
+            // End: Right edge of the Target Instruction Label (Vertical Center)
+            // +5 adds a small buffer so the arrowhead touches the label nicely
+            endX = toRect.right - svgRect.left + 5; 
+            endY = toRect.top + toRect.height / 2 - svgRect.top;
+
+            // Calculate Curve Strength based on distance
+            const dist = Math.abs(startX - endX);
+            const curvePower = Math.min(dist * 0.6, 150); 
+
+            // Cubic Bezier: Start -> Control1 -> Control2 -> End
+            // Control1 pulls LEFT from source, Control2 pulls RIGHT from target
+            d = `M ${{startX}},${{startY}} 
+                 C ${{startX - curvePower}},${{startY}} 
+                   ${{endX + curvePower}},${{endY}} 
+                   ${{endX}},${{endY}}`;
+
+        }} else {{
+            // Hazard: Standard Top-down Arc
+            
+            // Start: Center of Source Cell
+            startX = fromRect.left + fromRect.width / 2 - svgRect.left;
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            
+            // End: Top Center of Destination Cell
+            endX = toRect.left + toRect.width / 2 - svgRect.left;
+            endY = toRect.top - svgRect.top; 
+
+            // High Arc: Controls are 40px above the points
+            d = `M ${{startX}},${{startY}} C ${{startX}},${{startY - 40}} ${{endX}},${{endY - 40}} ${{endX}},${{endY}}`;
+        }}
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+
+        // --- Styling ---
+        if (type === "branch") {{
             path.setAttribute('stroke', '#28a745'); // Green
+            path.setAttribute('stroke-width', '3'); // Thicker for emphasis
+            path.setAttribute('fill', 'none');
             path.setAttribute('marker-end', 'url(#arrowhead-branch)');
-            path.setAttribute('stroke-dasharray', '0'); // Solid line
         }} else {{
             path.setAttribute('stroke', '#FF4500'); // Red
+            path.setAttribute('stroke-width', '2.5');
+            path.setAttribute('fill', 'none');
             path.setAttribute('marker-end', 'url(#arrowhead-hazard)');
-            path.setAttribute('class', 'arrow'); // Keep existing dash animation
+            path.setAttribute('class', 'arrow'); 
         }}
-        path.setAttribute('stroke-width', '2.5');
-        path.setAttribute('fill', 'none');
         
         arrowSvg.appendChild(path);
     }}
@@ -1588,14 +1586,36 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                 <marker id="arrowhead-hazard" markerWidth="5" markerHeight="3.5" refX="0" refY="1.75" orient="auto">
                     <polygon points="0 0, 5 1.75, 0 3.5" fill="#FF4500" />
                 </marker>
-                <marker id="arrowhead-branch" markerWidth="5" markerHeight="3.5" refX="0" refY="1.75" orient="auto">
-                    <polygon points="0 0, 5 1.75, 0 3.5" fill="#28a745" />
+                <marker id="arrowhead-branch" markerWidth="6" markerHeight="4" refX="4" refY="2" orient="auto">
+                    <polygon points="0 0, 6 2, 0 4" fill="#28a745" />
                 </marker>
             </defs>`;
 
         Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {{
             const instrCycleData = cycleData[currentCycle];
             
+            // --- DEBUG INJECTION START ---
+            if (instrCycleData && instrCycleData.stage === 'EX') {{
+                const h = instrCycleData.hazard_info;
+                if (h.forwardA !== 0 || h.forwardB !== 0) {{
+                     console.log(`Cycle ${{currentCycle}}: Drawing Hazard for PC ${{synthPc}}`);
+                     console.log("Hazard Info:", h);
+                     
+                     // Check DOM existence
+                     const destElem = document.getElementById(`content-${{synthPc}}-EX`);
+                     const srcMem = h.source_pc_mem ? document.getElementById(`content-${{h.source_pc_mem}}-MEM`) : null;
+                     const srcWb = h.source_pc_wb ? document.getElementById(`content-${{h.source_pc_wb}}-WB`) : null;
+
+                     console.log("DOM Elements Found:", {{ 
+                        DEST: !!destElem, 
+                        SRC_MEM: !!srcMem, 
+                        SRC_WB: !!srcWb 
+                     }});
+                }}
+            }}
+            // --- DEBUG INJECTION END ---
+
+
             if (instrCycleData && instrCycleData.stage === 'EX') {{
                 const hazardInfo = instrCycleData.hazard_info;
                 const toElem = document.getElementById(`content-${{synthPc}}-EX`);
@@ -1786,6 +1806,7 @@ else:
     print("\nCheck your hardware design's signal names to resolve these issues.")
 
 print("="*50 + "\n")
+
 
 
 
