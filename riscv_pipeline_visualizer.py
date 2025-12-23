@@ -728,40 +728,38 @@ for cycle_idx in range(num_cycles):
             is_source = actual_pc in hazard_sources
             if is_source: tooltip += "\n--- Hazard Source ---"
 
+           
             # --- STAGE-SPECIFIC LOGIC ---
             if stage == "EX":
                 hazard_info["forwardA"] = forwardA
                 hazard_info["forwardB"] = forwardB
                 hazard_info["branch_target_synth"] = None 
 
-                # --- NEW: GEM5-STYLE RESOURCE INFERENCE ---
-                # We infer which Hardware Unit is active based on the Opcode/Mnemonic
-                resource_type = "IDLE"
+                active_resources = []
                 
-                # Check for Load/Store Unit (LSU)
-                # We use the mnemonic OR the hardware write-enable signal
+                # 1. Check for Load/Store (LSU Instructions)
+                # In EX stage, these use the ALU for Address Generation (AGU)
                 mem_data_check = delayed_mem_values_by_cycle[cycle_idx]
                 is_mem_write = mem_data_check.get("wrEn") or mem_data_check.get("memWr") or mem_data_check.get("io_memWr")
                 
                 if any(op in mnemonic for op in ["lw", "lb", "lh", "sw", "sb", "sh"]) or is_mem_write:
-                    resource_type = "LSU"
+                    active_resources.append("ALU") # Correct: Address Calc happens here
                 
-                # Check for Branch Unit (BRU)
+                # 2. Check for Branch Unit (BRU)
                 elif any(op in mnemonic for op in ["beq", "bne", "blt", "bge", "jal", "jr", "ret"]):
-                    resource_type = "BRU"
+                    active_resources.append("BRU")
                 
-                # Check for Multiply/Divide Unit (MDU) - Optional if you implement M extension
+                # 3. Check for Multiply/Divide (MDU)
                 elif any(op in mnemonic for op in ["mul", "div", "rem"]):
-                    resource_type = "MDU"
+                    active_resources.append("MDU")
                 
-                # Default to Integer ALU
+                # 4. Default to Integer ALU
                 elif mnemonic and mnemonic not in ["nop", "flush", "bubble"]:
-                    resource_type = "ALU"
+                    active_resources.append("ALU")
 
-                # Save to hazard_info for JS
-                hazard_info["resource_active"] = resource_type
+                hazard_info["resource_active"] = active_resources
 
-                # [Keep your existing Forwarding Logic]
+                # --- EXISTING LOGIC BELOW ---
                 if forwardA == 1 or forwardB == 1:
                     hazard_info["source_pc_mem"] = vcd_actual_to_synthetic_pc_map.get(cycle_stage_pc[cycle_idx].get("MEM"))
                 if forwardA == 2 or forwardB == 2:
@@ -770,22 +768,26 @@ for cycle_idx in range(num_cycles):
                 ex_data = delayed_ex_values_by_cycle[cycle_idx]
                 op_a, op_b, res = ex_data.get("operandA"), ex_data.get("operandB"), ex_data.get("aluResult")
                 
-                # [Keep your existing Branch/Jump Logic]
+                # --- LOGIC: SEPARATE DISPLAY FOR BRANCH/JUMP ---
                 is_branch_instr = any(op in mnemonic for op in ["beq", "bne", "blt", "bge", "bltu", "bgeu"])
                 is_jump_instr = any(op in mnemonic for op in ["jal", "jalr", "j", "jr", "ret"])
 
                 if is_branch_instr:
                     is_flushing_now = (current_controls.get("flush_if") == 1 or current_controls.get("flush_id") == 1)
-                    # Peek ahead logic...
+                    
+                    # --- PEEK AHEAD FIX ---
                     next_cycle_idx = cycle_idx + 1 if cycle_idx + 1 < num_cycles else cycle_idx
                     next_controls = control_values_by_cycle[next_cycle_idx]
+                    
                     target = next_controls.get("branch_target")
                     if target is None: target = current_controls.get("branch_target")
                     target_val = target if target is not None else 0
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
 
                     if is_flushing_now:
+                        # ✅ SAVE TARGET FOR JS ARROW (Only if taken)
                         hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
+                        
                         display = f"<strong>Taken</strong><br>⟶ {target_display}"
                         tooltip += f"\nDecision: Taken (Flush Detected)\nTarget: {target_display}"
                     else:
@@ -793,28 +795,40 @@ for cycle_idx in range(num_cycles):
                         tooltip += f"\nDecision: Not Taken\nNext: PC + 4"
 
                 elif is_jump_instr:
-                    # [Keep Jump Logic]
                     next_cycle_idx = cycle_idx + 1 if cycle_idx + 1 < num_cycles else cycle_idx
                     target = control_values_by_cycle[next_cycle_idx].get("branch_target")
                     if target is None: target = current_controls.get("branch_target") or res
+                    
                     target_val = target if target is not None else 0
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
+                    
+                    # ✅ SAVE TARGET FOR JS ARROW (Always for Jumps)
                     hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
+
                     display = f"<strong>Jump</strong><br>⟶ {target_display}"
                     tooltip += f"\nOperation: Unconditional Jump\nTarget: {target_display}"
 
                 else:
-                    # [Keep ALU Logic]
+                    # --- STANDARD ALU DISPLAY (Arithmetic) ---
+                    
                     operator_map = {"addi": "+", "add": "+", "sub": "-", "and": "&", "or": "|", "xor": "^", "sll": "<<", "srl": ">>"}
                     operator_plain = operator_map.get(mnemonic, mnemonic.upper())
+                    
                     if (op_a is not None) and (op_b is not None) and (res is not None):
                         res_signed = res if res < 0x80000000 else res - 0x100000000
                         op_a_signed = op_a if op_a < 0x80000000 else op_a - 0x100000000
                         op_b_signed = op_b if op_b < 0x80000000 else op_b - 0x100000000
+                        
                         display = f"EX<br>{op_a_signed} {operator_plain} {op_b_signed} → {res_signed}"
                         tooltip += f"\n--- ALU ---\n{op_a_signed} {operator_plain} {op_b_signed} = {res_signed}"
             
             elif stage == "MEM":
+
+                 active_resources = []
+                 if is_store or any(op in mnemonic for op in ["lw", "lh", "lb"]):
+                     active_resources.append("LSU")
+                 
+                 hazard_info["resource_active"] = active_resources
                  if is_branch:
                      display = "---"
                  else:
@@ -1784,7 +1798,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                     const stageData = cycleData[c];
                     if (!stageData) continue;
 
-                    // 1. HAZARD
+                    // 1. HAZARD (Specific logic)
                     if (unit === "HAZ") {{
                         if (stageData.stage === 'EX' && stageData.hazard_info && 
                            (stageData.hazard_info.forwardA || stageData.hazard_info.forwardB)) {{
@@ -1792,28 +1806,34 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                             tooltipText = "Data Hazard (Forwarding)";
                         }}
                     }}
-                    // 2. FLUSH
+                    // 2. FLUSH (Specific logic)
                     else if (unit === "FLUSH") {{
                         if (stageData.is_flushed) {{
                             isActive = true;
                             tooltipText = "Pipeline Flush";
                         }}
                     }}
-                    // 3. STALL
+                    // 3. STALL (Specific logic)
                     else if (unit === "STALL") {{
                         if (stageData.is_stalled) {{
                             isActive = true;
                             tooltipText = "Pipeline Stalled";
                         }}
                     }}
-                    // 4. FUNCTIONAL UNITS
+                    // 4. FUNCTIONAL UNITS (ALU, LSU, BRU, MDU)
+                    // FIX: We removed "stageData.stage === 'EX'" check.
+                    // Now we rely purely on the resource list we built in Python.
                     else {{
-                        if (stageData.stage === 'EX' && stageData.hazard_info && 
-                            stageData.hazard_info.resource_active === unit) {{
-                            isActive = true;
-                            // Safe tooltip extraction
-                            const parts = stageData.tooltip.split('\\n');
-                            tooltipText = parts.length > 2 ? parts[2] : "Active";
+                        if (stageData.hazard_info && stageData.hazard_info.resource_active) {{
+                            const res = stageData.hazard_info.resource_active;
+                            const isUsingUnit = Array.isArray(res) ? res.includes(unit) : res === unit;
+                            
+                            if (isUsingUnit) {{
+                                isActive = true;
+                                // Safe tooltip extraction
+                                const parts = stageData.tooltip.split('\\n');
+                                tooltipText = parts.length > 2 ? parts[2] : "Active";
+                            }}
                         }}
                     }}
                     if (isActive) break; 
