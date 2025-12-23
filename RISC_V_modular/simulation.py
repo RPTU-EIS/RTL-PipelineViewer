@@ -1,259 +1,338 @@
-import re
 from collections import defaultdict
 from capstone import Cs, CS_ARCH_RISCV, CS_MODE_RISCV32
+import re
+import json
 
-def convert_hex_immediates_to_decimal(disasm: str) -> str:
-    def replace_hex(match):
-        hex_str = match.group(0)
-        value = int(hex_str, 16)
-        if value >= 0x800: value -= 0x1000
-        return str(value)
-    return re.sub(r'0x[0-9a-fA-F]+', replace_hex, disasm)
-
-def process_logic(trace):
-    num_cycles = trace["num_cycles"]
-    print(f"🧠 Processing logic for {num_cycles} cycles...")
-
-    # --- 1. Setup Disassembler ---
+def process_trace(trace_data):
+    num_cycles = trace_data["num_cycles"]
+    sigs = trace_data["signals"]
+    vcd = trace_data["vcd_obj"]
+    rising_edges = trace_data["rising_edges"]
+    
+    # --- Disassembler Setup ---
     md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV32)
     md.detail = True
 
-    # --- 2. Pre-calculation & Alignment ---
-    delayed_mem_values_by_cycle = [{} for _ in range(num_cycles)]
-    delayed_wb_values_by_cycle = [{} for _ in range(num_cycles)]
-    delayed_hazard_data_by_cycle = [{} for _ in range(num_cycles)]
-    delayed_ex_values_by_cycle = [{} for _ in range(num_cycles)]
-    
-    for i in range(1, num_cycles):
-        # Map raw trace lists back to dicts for the logic loop
-        delayed_mem_values_by_cycle[i] = {k: trace["mem"][k][i-1] for k in trace["mem"]}
-        delayed_wb_values_by_cycle[i] = {k: trace["wb"][k][i-1] for k in trace["wb"]}
-        delayed_hazard_data_by_cycle[i] = {k: trace["hazard"][k][i-1] for k in trace["hazard"]}
-        delayed_ex_values_by_cycle[i] = {k: trace["ex"][k][i-1] for k in trace["ex"]}
+    def convert_hex_immediates_to_decimal(disasm: str) -> str:
+        def replace_hex(match):
+            hex_str = match.group(0)
+            value = int(hex_str, 16)
+            if value >= 0x800: value -= 0x1000
+            return str(value)
+        return re.sub(r'0x[0-9a-fA-F]+', replace_hex, disasm)
 
-    # Control and Stall dictionaries
-    stall_values_by_cycle = [{k: trace["stall"][k][i] for k in trace["stall"]} for i in range(num_cycles)]
-    
-    control_values_by_cycle = [{} for _ in range(num_cycles)]
-    for i in range(1, num_cycles):
-        control_values_by_cycle[i] = {k: trace["control"][k][i-1] for k in trace["control"]}
+    # --- Delay Logic (Aligning Pipeline Stages) ---
+    # Shift everything by 1 cycle relative to fetch, as per original script logic
+    delayed_mem = [sigs["mem"][i-1] if i > 0 else {} for i in range(num_cycles)]
+    delayed_ex = [sigs["ex"][i-1] if i > 0 else {} for i in range(num_cycles)]
+    delayed_wb = [sigs["wb"][i-1] if i > 0 else {} for i in range(num_cycles)]
+    delayed_haz = [sigs["hazard"][i-1] if i > 0 else {} for i in range(num_cycles)]
+    delayed_reg = [sigs["reg"][i-1] if i > 0 else {f"x{k}": "0x00000000" for k in range(32)} for i in range(num_cycles)]
+    stall_vals = [sigs["stall"][i-1] if i > 0 else {} for i in range(num_cycles)]
+    ctrl_vals = [sigs["control"][i-1] if i > 0 else {} for i in range(num_cycles)]
 
-    # --- 3. Disassembly & Instruction Mapping ---
-    actual_pc_to_instr_hex = {}
-    actual_pc_to_disasm = {}
+    # --- Disassemble All Instructions found in VCD ---
+    actual_pc_to_instr_raw = {}
+    actual_pc_to_hex = {}
+    actual_pc_to_asm = {}
     
-    # Gather all PCs seen in any stage
-    all_seen_pcs = set()
-    for stage in ["IF", "ID", "EX", "MEM", "WB"]:
-        all_seen_pcs.update([x for x in trace["stages"][stage] if x is not None])
-
-    # Map PC -> Instruction based on when they appear in ID stage
-    if "ID" in trace["instr"]:
-        for i, pc in enumerate(trace["stages"]["ID"]):
-            inst = trace["instr"]["ID"][i]
-            if pc and inst:
-                if pc not in actual_pc_to_instr_hex:
-                    actual_pc_to_instr_hex[pc] = f"{inst:08x}"
+    # Re-extract raw PC/Instr values for mapping (needs raw VCD access)
+    for stage, pc_sig in trace_data["resolved_maps"]["stage"].items():
+        instr_sig = trace_data["resolved_maps"]["instr"].get(stage)
+        if not pc_sig or not instr_sig: continue
+        
+        pc_tv = sorted(vcd[pc_sig].tv, key=lambda x: x[0])
+        instr_tv = sorted(vcd[instr_sig].tv, key=lambda x: x[0])
+        
+        pc_idx, instr_idx = 0, 0
+        cur_pc, cur_instr = None, None
+        
+        # Merge timelines
+        all_times = sorted(list(set([t for t,_ in pc_tv] + [t for t,_ in instr_tv])))
+        
+        for t in all_times:
+            while pc_idx < len(pc_tv) and pc_tv[pc_idx][0] <= t:
+                try: cur_pc = int(pc_tv[pc_idx][1], 2)
+                except: cur_pc = None
+                pc_idx += 1
+            while instr_idx < len(instr_tv) and instr_tv[instr_idx][0] <= t:
+                cur_instr = instr_tv[instr_idx][1]
+                instr_idx += 1
+                
+            if cur_pc is not None and cur_instr and 'x' not in cur_instr.lower():
+                actual_pc_to_instr_raw[cur_pc] = cur_instr
+                
+                # Hex conversion
+                i_hex = ""
+                try:
+                    if len(cur_instr) == 32 and all(c in '01' for c in cur_instr):
+                        i_hex = f"{int(cur_instr, 2):08x}"
+                    elif all(c in '0123456789abcdef' for c in cur_instr.lower()):
+                        i_hex = f"{int(cur_instr, 16):08x}"
+                except: pass
+                actual_pc_to_hex[cur_pc] = i_hex
+                
+                # Disasm
+                if cur_pc not in actual_pc_to_asm and i_hex:
                     try:
-                        inst_bytes = inst.to_bytes(4, 'little')
-                        disassembled = list(md.disasm(inst_bytes, pc))
-                        if disassembled:
-                            op = disassembled[0]
-                            asm = f"{op.mnemonic} {op.op_str}"
-                            actual_pc_to_disasm[pc] = {"asm": convert_hex_immediates_to_decimal(asm)}
+                        b = bytes.fromhex(i_hex)[::-1]
+                        d = list(md.disasm(b, cur_pc))
+                        if d:
+                            asm = f"{d[0].mnemonic} {d[0].op_str}"
+                            actual_pc_to_asm[cur_pc] = {"asm": convert_hex_immediates_to_decimal(asm)}
                     except:
-                        actual_pc_to_disasm[pc] = {"asm": "Invalid"}
+                        actual_pc_to_asm[cur_pc] = {"asm": "Error"}
 
-    # --- 4. Pipeline Flow Inference (Ghost & Stall Logic) ---
-    stage_order_reversed = ["WB", "MEM", "EX", "ID", "IF"]
-    cycle_stage_pc = [{s: None for s in stage_order_reversed} for _ in range(num_cycles)]
+    # --- Pipeline Simulation Loop ---
+    # Extract raw stage PCs efficiently first
+    raw_stage_pcs = defaultdict(list)
+    for stage in ["IF", "ID", "EX", "MEM", "WB"]:
+        # Map back from the list of dicts to a dict of lists for easier access
+        raw_stage_pcs[stage] = [row.get(stage) for row in sigs["stage_pcs"]]
+
+    cycle_stage_pc = [{s: None for s in ["IF", "ID", "EX", "MEM", "WB"]} for _ in range(num_cycles)]
     forced_flush_mask = defaultdict(lambda: defaultdict(bool))
-    
+    stage_order_reversed = ["WB", "MEM", "EX", "ID", "IF"]
+
     for i in range(num_cycles):
-        curr_stall = stall_values_by_cycle[i]
-        curr_ctrl = control_values_by_cycle[i]
+        curr_st = stall_vals[i]
+        curr_ct = ctrl_vals[i]
         
         for stage in stage_order_reversed:
-            # Inputs
-            raw_val = trace["stages"][stage][i]
+            is_stalled = False
+            if stage == "IF" and curr_st.get("IF") == 1: is_stalled = True
+            elif stage == "ID" and curr_st.get("ID") == 1: is_stalled = True
+            
+            is_flushed = (curr_ct.get(f"flush_{stage.lower()}") == 1)
+            raw_val = raw_stage_pcs[stage][i]
             prev_val = cycle_stage_pc[i-1][stage] if i > 0 else None
             
-            # Flags
-            is_stalled = (stage in ["IF", "ID"] and curr_stall.get(stage) == 1)
-            is_flushed = (curr_ctrl.get(f"flush_{stage.lower()}") == 1)
-
-            upstream = {"ID":"IF", "EX":"ID", "MEM":"EX", "WB":"MEM"}.get(stage)
+            upstream = {"ID": "IF", "EX": "ID", "MEM": "EX", "WB": "MEM"}.get(stage)
             
-            # Logic
+            if i == 0:
+                cycle_stage_pc[i][stage] = raw_val
+                continue
+
+            # --- Logic Core ---
             if is_flushed and i > 0:
                 forced_flush_mask[i][stage] = True
                 candidate = cycle_stage_pc[i-1][upstream] if upstream else prev_val
-                if stage == "IF": candidate = None 
+                if stage == "IF": candidate = None # Force ghost logic
                 
                 # Ghost Recovery
                 if candidate is None:
-                    anchor = cycle_stage_pc[i].get("EX") or trace["stages"]["EX"][i]
-                    if anchor:
+                    anchor = cycle_stage_pc[i].get("EX") or raw_stage_pcs["EX"][i]
+                    if anchor and anchor > 0:
                         if stage == "ID": candidate = anchor + 4
                         if stage == "IF": candidate = anchor + 8
-                        if candidate and candidate not in actual_pc_to_disasm:
-                            actual_pc_to_disasm[candidate] = {"asm": "FLUSHED (Ghost)"}
-                            actual_pc_to_instr_hex[candidate] = "Ghost"
+                        
+                        # Add dummy instruction if needed
+                        if candidate and candidate not in actual_pc_to_asm:
+                            actual_pc_to_asm[candidate] = {"asm": "Flushed Instruction", "mnemonic": "FLUSH"}
+                            actual_pc_to_hex[candidate] = "Ghost"
                 
                 cycle_stage_pc[i][stage] = candidate
             
             elif is_stalled:
-                cycle_stage_pc[i][stage] = prev_val if (raw_val == 0 or raw_val is None) else raw_val
+                # Check downstream movement
+                downstream = {"IF":"ID", "ID":"EX", "EX":"MEM", "MEM":"WB"}.get(stage)
+                moved = False
+                if downstream:
+                    if prev_val is not None and prev_val == cycle_stage_pc[i][downstream]:
+                        moved = True
+                
+                if moved and upstream:
+                    cycle_stage_pc[i][stage] = cycle_stage_pc[i-1][upstream]
+                elif raw_val is not None and raw_val != 0:
+                    cycle_stage_pc[i][stage] = raw_val
+                else:
+                    cycle_stage_pc[i][stage] = prev_val
             else:
                 cycle_stage_pc[i][stage] = raw_val
+            
+            # IF/ID Freeze Peek
+            if stage == "IF":
+                cur_if = cycle_stage_pc[i]["IF"]
+                cur_id = cycle_stage_pc[i]["ID"]
+                if cur_if is not None and cur_if == cur_id and i < num_cycles - 1:
+                    nxt = raw_stage_pcs["IF"][i+1]
+                    if nxt and nxt != cur_if: cycle_stage_pc[i]["IF"] = nxt
 
-    # --- 5. Generate Output Data Structures ---
-    pipeline_data = defaultdict(lambda: [None] * num_cycles)
-    bubble_data = defaultdict(lambda: [None] * num_cycles)
-    mem_activity = []
+    # --- Build JS Data ---
+    vcd_map = {pc: pc for pc in sorted(actual_pc_to_asm.keys()) if pc != 0}
+    pipeline_js = defaultdict(lambda: [None] * num_cycles)
+    bubble_js = defaultdict(lambda: [None] * num_cycles)
     
-    vcd_actual_to_synthetic_pc_map = {pc: pc for pc in sorted(actual_pc_to_disasm.keys()) if pc != 0}
+    instruction_labels = []
+    for pc in sorted(vcd_map.keys()):
+        h = actual_pc_to_hex.get(pc, "N/A")
+        a = actual_pc_to_asm.get(pc, {}).get("asm", "N/A")
+        if a == "N/A" or h == "00000000": continue
+        instruction_labels.append({"id": pc, "label": f"PC_0x{pc:08x} | {h} ({a})"})
 
-    for idx in range(num_cycles):
-        haz = delayed_hazard_data_by_cycle[idx]
-        ctrl = control_values_by_cycle[idx]
+    # Main Data Population
+    for c in range(num_cycles):
+        haz = delayed_haz[c]
+        ctrl = ctrl_vals[c]
         fwdA = haz.get("forwardA", 0)
         fwdB = haz.get("forwardB", 0)
         
-        hazard_sources = set()
-        if fwdA == 1 or fwdB == 1: hazard_sources.add(cycle_stage_pc[idx]["MEM"])
-        if fwdA == 2 or fwdB == 2: hazard_sources.add(cycle_stage_pc[idx]["WB"])
+        sources = set()
+        if fwdA == 1 or fwdB == 1: sources.add(cycle_stage_pc[c].get("MEM"))
+        if fwdA == 2 or fwdB == 2: sources.add(cycle_stage_pc[c].get("WB"))
 
-        # Bubble Logic
-        if idx > 0:
-            for pc, hist in bubble_data.items():
-                if hist[idx-1] == "EX": hist[idx] = "MEM"
-                elif hist[idx-1] == "MEM": hist[idx] = "WB"
-            if stall_values_by_cycle[idx-1].get("ID") == 1:
-                upstream = cycle_stage_pc[idx].get("ID") or cycle_stage_pc[idx-1].get("ID")
-                if upstream in vcd_actual_to_synthetic_pc_map:
-                    bubble_data[upstream][idx] = "EX"
+        # Bubbles
+        if c > 0:
+            for pc, hist in bubble_js.items():
+                if hist[c-1] == "EX": hist[c] = "MEM"
+                elif hist[c-1] == "MEM": hist[c] = "WB"
+            
+            if stall_vals[c-1].get("ID") == 1:
+                upstream = cycle_stage_pc[c].get("ID") or cycle_stage_pc[c-1].get("ID")
+                if upstream in vcd_map: bubble_js[upstream][c] = "EX"
 
-        # Stage Loop
-        for stage in stage_order_reversed:
-            pc = cycle_stage_pc[idx][stage]
-            if pc not in vcd_actual_to_synthetic_pc_map: continue
-            
-            asm_obj = actual_pc_to_disasm.get(pc, {})
-            asm_text = asm_obj.get("asm", "Unknown")
-            mnemonic = asm_text.split()[0].lower()
-            
-            # --- RESOURCE INFERENCE ---
-            hazard_info = {"forwardA": fwdA, "forwardB": fwdB, "resource_active": []}
-            active_resources = []
-            
-            is_store = any(op in mnemonic for op in ["sw", "sh", "sb"])
-            is_load = any(op in mnemonic for op in ["lw", "lh", "lb"])
-            
-            if stage == "EX":
-                mem_chk = delayed_mem_values_by_cycle[idx]
-                is_mem_wr = mem_chk.get("wr_en")
+        # Stages
+        for stage in ["IF", "ID", "EX", "MEM", "WB"]:
+            pc = cycle_stage_pc[c].get(stage)
+            if pc in vcd_map:
+                asm = actual_pc_to_asm.get(pc, {}).get("asm", "N/A")
+                mnem = asm.split()[0].lower() if asm else ""
                 
-                if is_load or is_store or is_mem_wr:
-                    active_resources.extend(["ALU", "LSU"]) 
-                elif any(op in mnemonic for op in ["beq", "bne", "blt", "bge", "jal", "jr"]):
-                    active_resources.append("BRU")
-                elif any(op in mnemonic for op in ["mul", "div", "rem"]):
-                    active_resources.append("MDU")
-                elif mnemonic not in ["nop", "flush", "bubble"]:
-                    active_resources.append("ALU")
+                # Logic: Stalls, Flushes, Resources
+                is_stalled = False
+                if c > 0:
+                    prev = cycle_stage_pc[c-1].get(stage)
+                    if prev == pc: 
+                        is_stalled = True
+                        # Exceptions
+                        if stage == "IF" and c < 3 and stall_vals[c].get("IF")==0: is_stalled = False
+                        ds = {"IF":"ID", "ID":"EX", "EX":"MEM", "MEM":"WB"}.get(stage)
+                        if ds and cycle_stage_pc[c].get(ds) == pc: is_stalled = False
                 
-                if "beq" in mnemonic or "bne" in mnemonic or "jal" in mnemonic:
-                    next_idx = idx + 1 if idx < num_cycles - 1 else idx
-                    tgt = control_values_by_cycle[next_idx].get("branch_target")
-                    if tgt: hazard_info["branch_target_synth"] = tgt
-
-            elif stage == "MEM":
-                if is_load or is_store:
-                    active_resources.append("LSU")
-
-            hazard_info["resource_active"] = active_resources
-            
-            display = stage
-            tooltip = f"PC: {pc:x}\n{asm_text}"
-            
-            is_vis_stalled = False
-            if idx > 0 and cycle_stage_pc[idx-1].get(stage) == pc:
-                is_vis_stalled = True
+                # Flush Window override
+                for off in [0,1,2]:
+                    if c-off >= 0:
+                        cc = ctrl_vals[c-off]
+                        if cc.get("flush_if") == 1 or cc.get("flush_id") == 1: is_stalled = False; break
                 
-            for off in [0,1,2]:
-                if idx-off >= 0:
-                    c = control_values_by_cycle[idx-off]
-                    if c.get("flush_if") or c.get("flush_id"):
-                        is_vis_stalled = False
-            
-            is_flushed = (stage=="IF" and (ctrl.get("flush_if") or forced_flush_mask[idx]["IF"])) or \
-                         (stage=="ID" and (ctrl.get("flush_id") or forced_flush_mask[idx]["ID"]))
+                is_flushed = False
+                if stage == "IF" and (ctrl.get("flush_if")==1 or forced_flush_mask[c]["IF"]): is_flushed = True
+                if stage == "ID" and (ctrl.get("flush_id")==1 or forced_flush_mask[c]["ID"]): is_flushed = True
+                if is_flushed: is_stalled = False
 
-            if is_flushed: is_vis_stalled = False
+                # Display Text & Tooltip
+                disp = stage
+                tt = f"Stage: {stage}\nPC: 0x{pc:08x}\nInstruction: {asm}"
+                
+                h_info = {"forwardA": fwdA, "forwardB": fwdB, "source_pc_mem": None, "source_pc_wb": None, "branch_target_synth": None, "resource_active": []}
+                
+                # Resource Logic (Gem5 Style)
+                res_list = []
+                is_load_store = any(op in mnem for op in ["lw", "sw", "lb", "sb", "sh", "lh"])
+                is_branch = any(op in mnem for op in ["beq", "bne", "blt", "bge", "jal", "jr"])
+                is_mul = any(op in mnem for op in ["mul", "div", "rem"])
+                
+                # EX Stage Logic
+                if stage == "EX":
+                    if fwdA == 1 or fwdB == 1: h_info["source_pc_mem"] = cycle_stage_pc[c].get("MEM")
+                    if fwdA == 2 or fwdB == 2: h_info["source_pc_wb"] = cycle_stage_pc[c].get("WB")
+                    
+                    # Resources
+                    if is_load_store: res_list.extend(["LSU", "ALU"])
+                    elif is_branch: res_list.append("BRU")
+                    elif is_mul: res_list.append("MDU")
+                    elif mnem not in ["nop", "flush", "bubble"]: res_list.append("ALU")
+                    
+                    # Branch display
+                    op_a, op_b, res = delayed_ex[c].get("op_a"), delayed_ex[c].get("op_b"), delayed_ex[c].get("alu_result")
+                    
+                    if is_branch:
+                        flushing = (ctrl.get("flush_if")==1 or ctrl.get("flush_id")==1)
+                        if flushing:
+                            nxt = ctrl_vals[c+1] if c+1 < num_cycles else ctrl
+                            tgt = nxt.get("branch_target") or ctrl.get("branch_target") or 0
+                            h_info["branch_target_synth"] = tgt
+                            disp = f"<strong>Taken</strong><br>⟶ 0x{tgt&0xFFFFFFFF:08x}"
+                        else:
+                            disp = "<strong>Not Taken</strong>"
+                    elif any(op in mnem for op in ["jal", "jalr", "j"]):
+                        nxt = ctrl_vals[c+1] if c+1 < num_cycles else ctrl
+                        tgt = nxt.get("branch_target") or ctrl.get("branch_target") or res or 0
+                        h_info["branch_target_synth"] = tgt
+                        disp = f"<strong>Jump</strong><br>⟶ 0x{tgt&0xFFFFFFFF:08x}"
+                    elif op_a is not None and op_b is not None:
+                        # Simple ALU display
+                        disp = f"EX<br>{op_a} op {op_b} → {res}"
 
-            pipeline_data[pc][idx] = {
-                "stage": stage,
-                "display_text": display,
-                "tooltip": tooltip,
-                "hazard_info": hazard_info,
-                "is_stalled": is_vis_stalled,
-                "is_flushed": is_flushed,
-                "is_hazard_source": (pc in hazard_sources)
-            }
+                elif stage == "MEM":
+                    if is_load_store: res_list.append("LSU")
+                    addr, wdata, rdata = delayed_mem[c].get("addr"), delayed_mem[c].get("wdata"), delayed_mem[c].get("rdata")
+                    is_store_op = any(op in mnem for op in ["sw", "sh", "sb"])
+                    disp = "MEM<br>"
+                    if is_store_op: disp += f"M[{addr}] = {wdata}"
+                    elif is_load_store: 
+                        rd_val = delayed_haz[c].get("rd_mem_addr")
+                        disp += f"Load M[{addr}]"
+                        if rd_val: disp += f"<br>x{rd_val} = {rdata}"
+                    else: disp += "—"
 
-    # --- 6. Memory Activity ---
-    for idx in range(num_cycles):
-        md = delayed_mem_values_by_cycle[idx]
-        wr = md.get("wr_en", 0)
-        if wr or md.get("addr", 0) != 0: 
-            mem_activity.append({
-                "cycle": idx,
-                "addr": f"0x{md.get('addr',0):08x}",
-                "wdata": md.get("wdata", 0),
-                "rdata": md.get("rdata", 0),
-                "wr_en": wr
-            })
+                elif stage == "WB":
+                    wb_d = delayed_wb[c].get("wb_data") or delayed_wb[c].get("data")
+                    wb_r = delayed_wb[c].get("rd") or delayed_wb[c].get("wb_rd")
+                    if wb_d is not None and wb_r:
+                        disp = f"WB<br>x{wb_r} = {wb_d}"
+                    else:
+                        h_info["is_skipped"] = True
+                        disp = "---"
 
-    # --- 7. Instruction Labels ---
-    instruction_labels = []
-    for pc in sorted(vcd_actual_to_synthetic_pc_map.keys()):
-        hex_s = actual_pc_to_instr_hex.get(pc, "????????")
-        asm_s = actual_pc_to_disasm.get(pc, {}).get("asm", "???")
-        instruction_labels.append({
-            "id": pc,
-            "label": f"PC_0x{pc:08x} | {hex_s} ({asm_s})"
+                h_info["resource_active"] = res_list
+                
+                pipeline_js[str(pc)][c] = {
+                    "stage": stage, "tooltip": tt, "display_text": disp,
+                    "hazard_info": h_info, "is_hazard_source": (pc in sources),
+                    "is_stalled": is_stalled, "is_flushed": is_flushed
+                }
+
+    # --- Reg Highlight Data ---
+    reg_highlight = []
+    use_rs2 = {0x33, 0x23, 0x63}
+    for c in range(num_cycles):
+        h = delayed_haz[c]
+        op = h.get("opcode")
+        try:
+            if isinstance(op, str): op = int(op, 2)
+        except: op = None
+        
+        reg_highlight.append({
+            "id_rs1": h.get("rs1_addr"),
+            "id_rs2": h.get("rs2_addr") if op in use_rs2 else None,
+            "wb_rd": delayed_wb[c].get("rd")
         })
 
-    # --- 8. Register Data (FIXED LOOP) ---
-    # The VCD Reader returns a dict of lists { "x0": [val, val...], "x1": [...] }
-    # We need to pivot this to { cycle: { "x0": val, "x1": val } }
-    reg_display = {}
-    for i in range(num_cycles):
-        reg_snapshot = {}
-        for reg_name, values_list in trace["reg"].items():
-            val = values_list[i] if i < len(values_list) else 0
-            reg_snapshot[reg_name] = f"0x{val:08x}"
-        reg_display[i] = reg_snapshot
-
-    # --- 9. Register Highlight Data ---
-    reg_highlights = []
-    for i in range(num_cycles):
-        h = delayed_hazard_data_by_cycle[i]
-        wb = delayed_wb_values_by_cycle[i]
-        reg_highlights.append({
-            "id_rs1": h.get("rs1_addr"),
-            "id_rs2": h.get("rs2_addr"),
-            "wb_rd": wb.get("rd")
+    # --- Mem Activity ---
+    mem_act = []
+    for c in range(num_cycles):
+        m = delayed_mem[c] if c < len(delayed_mem) else {}
+        we = m.get("wr_en")
+        try: wr_flag = bool(int(we)) if we is not None else False
+        except: wr_flag = bool(we)
+        
+        mem_act.append({
+            "cycle": c,
+            "addr": m.get("addr"),
+            "wdata": m.get("wdata") if wr_flag else "—",
+            "rdata": "—" if wr_flag else m.get("rdata"),
+            "wr_en": wr_flag
         })
 
     return {
         "num_cycles": num_cycles,
-        "pipeline_data": pipeline_data,
-        "bubble_data": bubble_data,
+        "pipeline_data": pipeline_js,
         "instruction_labels": instruction_labels,
-        "register_data": reg_display,
-        "reg_highlights": reg_highlights,
-        "mem_activity": mem_activity,
-        "pc_map": vcd_actual_to_synthetic_pc_map
+        "register_data": delayed_reg,
+        "vcd_map": vcd_map,
+        "reg_highlight": reg_highlight,
+        "mem_activity": mem_act,
+        "bubble_data": bubble_js,
+        "missing_report": trace_data["missing_report"]
     }

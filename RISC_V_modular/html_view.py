@@ -1,398 +1,563 @@
 import json
 
-def generate_html(sim_results, missing_signals_html=""):
+def generate_html(sim_results):
+    # 1. Prepare JSON Data
+    pipeline_json = json.dumps(sim_results["pipeline_data"])
+    labels_json = json.dumps(sim_results["instruction_labels"])
+    reg_json = json.dumps(sim_results["register_data"])
+    # Ensure keys are strings for the VCD map
+    map_json = json.dumps({str(k):v for k,v in sim_results["vcd_map"].items()})
+    high_json = json.dumps(sim_results["reg_highlight"])
+    mem_json = json.dumps(sim_results["mem_activity"])
+    bubble_json = json.dumps(sim_results["bubble_data"])
+    color_map = json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"})
     
-    # 1. Serialize Data for JS
-    # Convert pipeline data to dict with string keys for JSON compatibility
-    pipeline_serializable = {str(k): v for k, v in sim_results["pipeline_data"].items()}
-    
-    js_data = {
-        "pipeline_data_js": json.dumps(pipeline_serializable),
-        "instruction_labels_js": json.dumps(sim_results["instruction_labels"]),
-        "register_data_js": json.dumps(sim_results["register_data"]),
-        "num_cycles": sim_results["num_cycles"],
-        "color_map_js": json.dumps({"IF":"#ff9933","ID":"#5cd65c","EX":"#4b9aefd7","MEM":"#cf66ffb9","WB":"#ff2525c6"}),
-        "vcd_actual_to_synthetic_pc_map_js": json.dumps(sim_results["pc_map"]),
-        "reg_highlight_data_js": json.dumps(sim_results["reg_highlights"]),
-        "mem_activity_js": json.dumps(sim_results["mem_activity"]),
-        "bubble_data_js": json.dumps(sim_results["bubble_data"]),
-        "missing_signals_html": missing_signals_html
-    }
+    # 2. Build Missing Signals HTML
+    missing_html = ""
+    if sim_results["missing_report"]:
+        all_missing = [k for v in sim_results["missing_report"].values() for k in v]
+        if all_missing:
+            missing_html = f"""
+            <div id="missing-signals-container" class="missing-signals-box">
+                <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
+                <div class="missing-signals-header"><span>⚠️</span><strong>Missing Signals Detected</strong></div>
+                <div class="missing-signals-list">
+            """
+            for cat, keys in sim_results["missing_report"].items():
+                if keys:
+                    missing_html += f"<div class='signal-category-block'><h4>{cat}</h4><ul>"
+                    for k in keys: missing_html += f"<li><code>{k}</code></li>"
+                    missing_html += "</ul></div>"
+            missing_html += "</div></div>"
 
-    # 2. The HTML Template (Contains your latest fixes: Double Brackets, Resource Panel, etc.)
-    html_template = """
-<!DOCTYPE html>
+    # 3. HTML Template (Raw String)
+    # NOTE: We use single brackets { } for CSS and JS. We use .replace() to inject data.
+    html_template = r"""
 <html><head><title>Pipeline & Register Animation</title>
 <style>
-body {{ font-family: sans-serif; margin: 20px; background-color: #f9f9f9; }}
-h2, h3 {{ text-align: center; color: #333; }}
+body { font-family: sans-serif; margin: 20px; } h2, h3 { text-align: center; }
+.controls { text-align: center; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls button { padding: 10px 20px; font-size: 16px; cursor: pointer; } 
+#cycleCounter { font-size: 18px; font-weight: bold; }
+.speed-control-container { display: flex; align-items: center; gap: 5px; }
+#speedValue { font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }
+.content-wrapper { display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }
+.pipeline-grid, .register-grid { display: grid; border: 1px solid #ccc; width: fit-content; }
+.pipeline-grid { grid-template-columns: 380px repeat(5, 120px); }
+.register-grid { grid-template-columns: 110px 210px 95px 95px;}
+.grid-header, .grid-cell { padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }
+.grid-header { background-color: #ddd; font-weight: bold; }
+.instruction-label { text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }
+.stage-cell { height: 50px; position: relative; }
+.stage-content { width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }
+.tooltip-text { visibility: hidden; background-color: #555; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; width: max-content; white-space: pre-wrap; }
+.stage-content:hover .tooltip-text { visibility: visible; opacity: 1; }
+.legend { margin: 20px auto; display: flex; justify-content: center; gap: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; width: fit-content; flex-wrap: wrap; }
+.legend-item { display: inline-flex; align-items: center; gap: 8px; }
+.legend-color-box { width: 20px; height: 20px; border-radius: 4px; border: 2px solid; }
+.register-name-cell { font-family: monospace; text-align: left !important; padding-left: 10px !important; }
+.register-value-cell { font-family: monospace; }
+.register-value-cell.changed { background-color: #FFD700; transition: background-color 0.1s ease-in; }
+.hazard-source-highlight { border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7);background-color: #ffe5e5; }
+.forwarding-destination-highlight { border: 3px solid #007BFF !important; box-shadow: 0 0 10px rgba(0, 123, 255, 0.7); background-color: #cce5ff !important; }
+#arrow-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.arrow { stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead-hazard); }
+@keyframes dash { to { stroke-dashoffset: -10; } }
 
-/* --- Controls & Layout --- */
-.controls {{ text-align: center; margin: 20px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }}
-.controls button {{ padding: 8px 16px; font-size: 14px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; transition: background 0.2s; }}
-.controls button:hover {{ background: #eef; }}
-#cycleCounter {{ font-size: 18px; font-weight: bold; margin: 0 15px; align-self: center; }}
+.missing-signals-box { max-width: 900px; margin: 10px auto; padding: 20px; border: 1px solid #ffb300; background-color: #fff8e1; border-radius: 8px; position: relative; color: #5b4d24; }
+.missing-signals-header { display: flex; align-items: center; font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #c58600; }
+.missing-signals-list { column-count: 3; column-gap: 20px; }
+.missing-signals-list ul { list-style-type: none; padding-left: 0; }
+.missing-signals-list li code { font-family: monospace; background-color: #f0e9d1; padding: 3px 6px; border-radius: 4px; font-size: 13px; }
+.close-btn { position: absolute; top: 10px; right: 15px; font-size: 24px; font-weight: bold; cursor: pointer; }
 
-.content-wrapper {{ display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; margin-top: 20px; }}
+.stalled-stage { background-image: repeating-linear-gradient(45deg, rgba(255,0,0,0.2), rgba(255,0,0,0.2) 10px, rgba(255,0,0,0.3) 10px, rgba(255,0,0,0.3) 20px); border: 2px solid red !important; animation: pulse-stall 1s infinite; }
+.bubble-stage { background-color: #e0e0e0 !important; border: 2px dashed #999 !important; color: #666; font-style: italic; opacity: 0.7; }
+.flushed-stage { background-color: #ffcccc !important; text-decoration: line-through; opacity: 0.6; }
+@keyframes pulse-stall { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
 
-/* --- Resource Timeline (Fixed & Centered) --- */
-#resource-panel {{
-    margin: 20px auto;
-    width: fit-content;
-    min-width: 600px; max-width: 98%;
-    background-color: #fff; border: 1px solid #ccc;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-radius: 5px;
-    display: flex; flex-direction: column; overflow: hidden;
-}}
-.timeline-scroll-wrapper {{ overflow-x: auto; width: 100%; padding-bottom: 5px; }}
-.resource-grid {{ display: grid; gap: 0; background-color: #fff; width: max-content; border-top: 1px solid #ccc; border-collapse: collapse; }}
-
-.resource-row-label {{ 
-    position: sticky; left: 0; z-index: 20; 
-    background-color: #1e3a8a; color: #fff; padding: 0 8px; 
-    font-weight: 600; font-size: 12px; text-align: right; 
-    display: flex; align-items: center; justify-content: flex-end;
-    border-bottom: 1px solid #4a6fa5; border-right: 1px solid #ccc; height: 26px; box-sizing: border-box;
-}}
-.grid-header.sticky-corner {{
-    position: sticky; left: 0; z-index: 21; background-color: #1e3a8a; color: #fff;
-    border: none; font-size: 12px; display: flex; align-items: center; justify-content: center;
-    border-right: 1px solid #ccc; height: 26px; box-sizing: border-box;
-}}
-.resource-cell {{ width: 100%; height: 26px; background-color: #fff; box-sizing: border-box; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }}
-
-.grid-header.timeline-tick {{
-    font-size: 11px; font-weight: bold; cursor: pointer; 
-    background-color: #1e3a8a; color: white; user-select: none;
-    height: 26px; width: 100%; padding: 0; display: flex; align-items: center; justify-content: center;
-    border-right: 1px solid #4a6fa5; box-sizing: border-box;
-}}
-.grid-header.timeline-tick:hover {{ background-color: #3b82f6 !important; }}
-
-/* Resource Colors */
-.res-active-ALU {{ background-color: #4b9aef !important; }}
-.res-active-LSU {{ background-color: #cf66ff !important; }}
-.res-active-BRU {{ background-color: #28a745 !important; }}
-.res-active-MDU {{ background-color: #ff9933 !important; }}
-.res-active-HAZ {{ background-color: #FF4500 !important; }}
-.res-active-FLUSH {{ background-color: #dc3545 !important; }}
-.res-active-STALL {{ background-color: #e0e0e0 !important; background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px); }}
-.current-cycle-column {{ background-color: #fff9c4; border-left: 2px solid #ffc107 !important; border-right: 2px solid #ffc107 !important; z-index: 10; }}
-
-/* --- Pipeline & Register Grids --- */
-.pipeline-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; grid-template-columns: 350px repeat(5, 100px); }}
-.register-grid {{ display: grid; border: 1px solid #ccc; width: fit-content; grid-template-columns: 100px 180px 80px 80px; }}
-
-.grid-header, .grid-cell {{ padding: 6px; border: 1px solid #eee; text-align: center; white-space: nowrap; font-size: 13px; }}
-.grid-header {{ background-color: #ddd; font-weight: bold; }}
-.instruction-label {{ text-align: left; font-family: monospace; font-weight: bold; padding-left: 10px; }}
-
-.stage-content {{ 
-    width: 90%; height: 90%; border-radius: 4px; margin: auto; 
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    font-size: 11px; color: #333; cursor: help; font-family: monospace;
-}}
-.stalled-stage {{ border: 2px solid red; background-image: repeating-linear-gradient(45deg, #fff0f0, #fff0f0 10px, #ffe0e0 10px, #ffe0e0 20px); }}
-.flushed-stage {{ background-color: #ffcccc !important; text-decoration: line-through; opacity: 0.7; }}
-.bubble-stage {{ background-color: #eee !important; border: 2px dashed #bbb; color: #777; font-style: italic; }}
-
-/* Arrow Overlay */
-#arrow-svg {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }}
-
-/* Memory Activity Table */
-#memActivityTable {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-#memActivityTable th {{ background-color: #1e3a8a; color: white; padding: 8px; }}
-#memActivityTable td {{ border: 1px solid #ddd; padding: 6px; text-align: center; }}
-
+/* TIMELINE */
+#resource-panel { margin: 20px auto; width: fit-content; min-width: 600px; max-width: 98%; background-color: #fff; border: 1px solid #ccc; border-radius: 5px; display: flex; flex-direction: column; overflow: hidden; }
+.timeline-scroll-wrapper { overflow-x: auto; width: 100%; padding-bottom: 5px; }
+.resource-grid { display: grid; gap: 0; background-color: #fff; width: max-content; border-top: 1px solid #ccc; border-collapse: collapse; }
+.resource-row-label { position: sticky; left: 0; z-index: 20; background-color: #1e3a8a; color: #fff; padding: 0 8px; font-weight: 600; font-size: 12px; text-align: right; display: flex; align-items: center; justify-content: flex-end; border-bottom: 1px solid #4a6fa5; border-right: 1px solid #ccc; height: 26px; box-sizing: border-box; }
+.grid-header.sticky-corner { position: sticky; left: 0; z-index: 21; background-color: #1e3a8a; color: #fff; border: none; font-size: 12px; display: flex; align-items: center; justify-content: center; border-right: 1px solid #ccc; height: 26px; box-sizing: border-box; }
+.resource-cell { width: 100%; height: 26px; background-color: #fff; box-sizing: border-box; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }
+.grid-header.timeline-tick { font-size: 11px; font-weight: bold; cursor: pointer; background-color: #1e3a8a; color: white; user-select: none; height: 26px; width: 100%; padding: 0; display: flex; align-items: center; justify-content: center; border-right: 1px solid #4a6fa5; box-sizing: border-box; }
+.grid-header.timeline-tick:hover { background-color: #3b82f6 !important; }
+.res-active-ALU { background-color: #4b9aef !important; }
+.res-active-LSU { background-color: #cf66ff !important; }
+.res-active-BRU { background-color: #28a745 !important; }
+.res-active-MDU { background-color: #ff9933 !important; }
+.res-active-HAZ { background-color: #FF4500 !important; }
+.res-active-FLUSH { background-color: #dc3545 !important; }
+.res-active-STALL { background-color: #e0e0e0 !important; background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px); }
+.current-cycle-column { background-color: #fff9c4; border-left: 2px solid #ffc107 !important; border-right: 2px solid #ffc107 !important; z-index: 10; }
 </style>
 </head>
 <body>
-
-<h2>RISC-V Pipeline Visualizer</h2>
-{missing_signals_html}
+<h2>Pipeline Animation with Register State</h2>
+<div style="font-size: 14px; margin-bottom: 10px;">{missing_signals_html}</div>
 
 <div class="controls">
     <button id="prevBtn">Previous</button>
-    <span id="cycleCounter">Cycle 0</span>
+    <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
     <button id="nextBtn">Next</button>
     <button id="playPauseBtn">Play</button>
-    <button id="toggleResourcesBtn">Hide Resources</button>
-    <button id="toggleMemBtn">Show Memory</button>
-    <input type="range" id="speedControl" min="100" max="1000" value="500">
+    <button id="restartBtn">Restart</button>
+    <button id="toggleArrowsBtn">Hide Forwarding</button>  
+    <button id="toggleHazardsBtn">Show Hazards</button>  
+    <button id="toggleSignedBtn">Show Signed</button>
+    <button id="toggleMemActivityBtn">Show MEM Activity</button>
+    <button id="toggleResourcesBtn">Show Resources</button>
+    <div class="speed-control-container">
+        <label for="speedControl">Speed:</label>
+        <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
+        <span id="speedValue">500ms</span>
+    </div>
 </div>
 
-<div id="resource-panel">
-    <div style="padding: 10px; background: #f1f1f1; display:flex; justify-content:space-between; border-bottom:1px solid #ddd;">
-        <h3 style="margin:0; font-size:14px;">Execution Timeline</h3>
-        <div style="font-size:11px; display:flex; gap:10px;">
-            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#4b9aef;margin-right:4px;"></span>ALU</span>
-            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#cf66ff;margin-right:4px;"></span>LSU</span>
-            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#28a745;margin-right:4px;"></span>BRU</span>
-            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#FF4500;margin-right:4px;"></span>Hazard</span>
-            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#e0e0e0;margin-right:4px;"></span>Stall</span>
+<div class="legend">
+    <input type="text" id="searchBox" placeholder="Search PC, instruction or register ">
+    <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
+    <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
+    <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
+</div>
+
+<div id="mem-activity-panel" style="display: none; margin-top: 20px; max-width: 1000px; margin-left: auto; margin-right: auto;">
+    <h3>Memory Activity (current cycle)</h3>
+    <table id="memActivityTable" style="width:100%; border-collapse: collapse;">
+        <thead><tr>
+            <th style="border: 1px solid #ddd; padding: 8px;">Cycle</th>
+            <th style="border: 1px solid #ddd; padding: 8px;">Address</th>
+            <th style="border: 1px solid #ddd; padding: 8px;">Write Data</th>
+            <th style="border: 1px solid #ddd; padding: 8px;">Read Data</th>
+            <th style="border: 1px solid #ddd; padding: 8px;">WrEn</th>
+        </tr></thead>
+        <tbody id="memActivityTbody"></tbody>
+    </table>
+</div>
+
+<div id="resource-panel" style="display: none;">
+    <div style="padding: 10px 15px; background: #f1f1f1; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; font-size: 16px; color: #333;">Execution Timeline</h3>
+        <div style="font-size: 11px; display: flex; gap: 10px; margin-top: 5px;">
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#4b9aef; margin-right:4px; border:1px solid #999;"></span>ALU</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#cf66ff; margin-right:4px; border:1px solid #999;"></span>Ld/St U</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#28a745; margin-right:4px; border:1px solid #999;"></span>BRU</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#FF4500; margin-right:4px; border:1px solid #999;"></span>Forwarding</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#dc3545; margin-right:4px; border:1px solid #999;"></span>Flush</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#e0e0e0; margin-right:4px; border:1px solid #999;"></span>Stall</span>
         </div>
     </div>
     <div class="timeline-scroll-wrapper"><div id="resourceDisplay" class="resource-grid"></div></div>
-</div>
-
-<div id="mem-activity-panel" style="display:none; max-width:800px; margin:20px auto;">
-    <h3>Memory Activity</h3>
-    <table id="memActivityTable">
-        <thead><tr><th>Cycle</th><th>Address</th><th>Write Data</th><th>Read Data</th><th>WrEn</th></tr></thead>
-        <tbody id="memActivityTbody"></tbody>
-    </table>
 </div>
 
 <div class="content-wrapper">
     <div class="pipeline-container">
         <h3>Pipeline Stages</h3>
         <div style="position: relative;">
-            <div id="pipelineDisplay" class="pipeline-grid"></div>
+            <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
             <svg id="arrow-svg"></svg>
         </div>
     </div>
     <div class="register-container">
-        <h3>Register File</h3>
+        <h3>Register File State</h3>
         <div id="registerTable" class="register-grid">
-            <div class="grid-header">Reg</div><div class="grid-header">Val</div><div class="grid-header">Rd</div><div class="grid-header">Wr</div>
+            <div class="grid-header">Register</div>
+            <div class="grid-header">Value</div>
+            <div class="grid-header">Read (EX)</div>
+            <div class="grid-header">Write (WB)</div>
         </div>
     </div>
 </div>
 
 <script>
-    // --- Data Injection ---
     const pipelineData = {pipeline_data_js};
-    const instrLabels = {instruction_labels_js};
-    const regData = {register_data_js};
+    const instructionLabels = {instruction_labels_js};
+    const registerData = {register_data_js};
     const numCycles = {num_cycles};
     const colorMap = {color_map_js};
-    const regHighlights = {reg_highlight_data_js};
+    const vcdMap = {vcd_map_js};
+    const regHighlightData = {reg_highlight_data_js};
     const memActivity = {mem_activity_js};
     const bubbleData = {bubble_data_js};
+    
+    const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
+    let currentCycle = 0, animationInterval = null, animationSpeed = 500, showArrows = true;
+    let showHazards = false;
 
-    // --- State ---
-    let currentCycle = 0;
-    let isPlaying = false;
-    let timer = null;
-    let speed = 500;
-
-    // --- UI References ---
-    const display = document.getElementById('pipelineDisplay');
-    const regTable = document.getElementById('registerTable');
+    const pipelineDisplay = document.getElementById('pipelineDisplay');
+    const registerTable = document.getElementById('registerTable');
     const arrowSvg = document.getElementById('arrow-svg');
-    
-    // --- Setup ---
-    function init() {{
-        // Headers
-        ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(t => {{
-            const d = document.createElement('div'); d.className='grid-header'; d.textContent=t; display.appendChild(d);
-        }});
-        
-        // Pipeline Grid
-        instrLabels.forEach(item => {{
-            const label = document.createElement('div'); label.className='grid-cell instruction-label';
-            label.textContent = item.label; label.id = `label-${{item.id}}`; display.appendChild(label);
-            for(let i=0; i<5; i++) {{
-                const cell = document.createElement('div'); cell.className='grid-cell'; cell.id = `cell-${{item.id}}-${{i}}`;
-                display.appendChild(cell);
-            }}
-        }});
+    const cycleCounter = document.getElementById('cycleCounter');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const speedControl = document.getElementById('speedControl');
+    const speedValue = document.getElementById('speedValue');
+    const searchBox = document.getElementById('searchBox');
+    const memActivityPanel = document.getElementById('mem-activity-panel');
+    const memActivityTbody = document.getElementById('memActivityTbody');
+    const toggleMemActivityBtn = document.getElementById('toggleMemActivityBtn');
 
-        // Register Grid
-        for(let i=0; i<32; i++) {{
-            ['x'+i, '0x0', '', ''].forEach((txt, idx) => {{
-                const d = document.createElement('div'); d.className='grid-cell'; 
-                if(idx===1) d.id = `reg-val-${{i}}`;
-                if(idx===2) d.id = `reg-read-${{i}}`;
-                if(idx===3) d.id = `reg-write-${{i}}`;
-                d.textContent = idx===0 ? `x${{i}}` : txt;
-                regTable.appendChild(d);
-            }});
-        }}
-        
-        updateView();
+    function populateStaticGrid() {
+        ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(text => {
+            const header = document.createElement('div');
+            header.className = 'grid-header'; header.textContent = text;
+            pipelineDisplay.appendChild(header);
+        });
+        instructionLabels.forEach((item) => {
+            const pcId = item.id;
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'grid-cell instruction-label';
+            labelDiv.id = `instr-label-${pcId}`;
+            labelDiv.textContent = item.label;
+            pipelineDisplay.appendChild(labelDiv);
+            for (let i = 0; i < 5; i++) {
+                const stageCell = document.createElement('div');
+                stageCell.className = 'grid-cell stage-cell';
+                stageCell.id = `stage-cell-${pcId}-${i}`; 
+                pipelineDisplay.appendChild(stageCell);
+            }
+        });
+        for (let i = 0; i < 32; i++) {
+            const nameCell = document.createElement('div');
+            nameCell.className = 'grid-cell register-name-cell';
+            nameCell.textContent = `x${i} (${abiNames[i]})`;
+            registerTable.appendChild(nameCell);
+            const valueCell = document.createElement('div');
+            valueCell.className = 'grid-cell register-value-cell';
+            valueCell.id = `reg-val-${i}`;
+            registerTable.appendChild(valueCell);
+            const readCell = document.createElement('div');
+            readCell.className = 'grid-cell';
+            readCell.id = `reg-read-${i}`;
+            registerTable.appendChild(readCell);
+            const writeCell = document.createElement('div');
+            writeCell.className = 'grid-cell';
+            writeCell.id = `reg-write-${i}`;
+            registerTable.appendChild(writeCell);
+        }
+    }
+
+    function updateDisplay() {
+        cycleCounter.textContent = `Cycle ${currentCycle} / ${numCycles - 1}`;
+        updatePipelineDisplay();
+        updateRegisterTable();
         updateResourceDisplay();
-    }}
+        if (memActivityPanel.style.display !== 'none') renderMemActivityForCycle(currentCycle);
+        prevBtn.disabled = currentCycle === 0;
+        nextBtn.disabled = currentCycle === numCycles - 1;
+        setTimeout(updateArrows, 0);
+    }
 
-    function updateView() {{
-        document.getElementById('cycleCounter').textContent = `Cycle ${{currentCycle}} / ${{numCycles-1}}`;
-        
-        // Clear old
-        document.querySelectorAll('.stage-content').forEach(e => e.remove());
-        
-        // Pipeline
-        for(const [pc, cycleMap] of Object.entries(pipelineData)) {{
-            const data = cycleMap[currentCycle];
-            if(data) {{
-                const stageIdx = {{'IF':0,'ID':1,'EX':2,'MEM':3,'WB':4}}[data.stage];
-                const cell = document.getElementById(`cell-${{pc}}-${{stageIdx}}`);
-                if(cell) {{
-                    const div = document.createElement('div');
-                    div.className = 'stage-content';
-                    div.style.backgroundColor = colorMap[data.stage];
-                    div.innerHTML = data.display_text;
-                    div.id = `content-${{pc}}-${{data.stage}}`; // For arrows
-                    if(data.is_stalled) div.classList.add('stalled-stage');
-                    if(data.is_flushed) div.classList.add('flushed-stage');
-                    cell.appendChild(div);
-                }}
-            }}
-            // Bubbles
-            if(bubbleData[pc] && bubbleData[pc][currentCycle]) {{
-                const stage = bubbleData[pc][currentCycle];
-                const sIdx = {{'IF':0,'ID':1,'EX':2,'MEM':3,'WB':4}}[stage];
-                const cell = document.getElementById(`cell-${{pc}}-${{sIdx}}`);
-                if(cell) {{
-                    const div = document.createElement('div'); div.className='stage-content bubble-stage';
-                    div.innerHTML='Bubble'; cell.appendChild(div);
-                }}
-            }}
-        }}
+    function updatePipelineDisplay() {
+        document.querySelectorAll('.stage-cell').forEach(c => c.innerHTML = '');
+        document.querySelectorAll('.instruction-label').forEach(l => l.classList.remove('hazard-source-highlight'));
+        Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+            const instrCycleData = cycleData[currentCycle];
+            if (instrCycleData) {
+                if (showHazards && instrCycleData.is_hazard_source) {
+                    const label = document.getElementById(`instr-label-${synthPc}`);
+                    if (label) label.classList.add('hazard-source-highlight');
+                }
+                const stageIdx = {IF:0, ID:1, EX:2, MEM:3, WB:4}[instrCycleData.stage];
+                const stageCell = document.getElementById(`stage-cell-${synthPc}-${stageIdx}`);
+                if (stageCell) {
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'stage-content';
+                    contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
+                    contentDiv.id = `content-${synthPc}-${instrCycleData.stage}`;
+                    if (instrCycleData.is_stalled) {
+                        contentDiv.classList.add('stalled-stage');
+                        contentDiv.innerHTML = "<strong>STALL</strong><br>" + instrCycleData.display_text;
+                    } else { contentDiv.innerHTML = instrCycleData.display_text; }
+                    if (instrCycleData.is_flushed) {
+                        contentDiv.classList.add('flushed-stage');
+                        contentDiv.innerHTML += "<br><strong>(FLUSHED)</strong>";
+                    }
+                    if (instrCycleData.stage === "EX") {
+                        const hasForwarding = (instrCycleData.hazard_info.forwardA !== 0) || (instrCycleData.hazard_info.forwardB !== 0);
+                        if (showArrows && hasForwarding) contentDiv.classList.add('forwarding-destination-highlight');
+                    }
+                    const tooltipSpan = document.createElement('span');
+                    tooltipSpan.className = 'tooltip-text';
+                    tooltipSpan.textContent = instrCycleData.tooltip;
+                    contentDiv.appendChild(tooltipSpan);
+                    stageCell.appendChild(contentDiv);
+                }
+            }
+            const bubbleStage = bubbleData[synthPc] ? bubbleData[synthPc][currentCycle] : null;
+            if (bubbleStage) {
+                const stageIdx = {IF:0, ID:1, EX:2, MEM:3, WB:4}[bubbleStage];
+                const stageCell = document.getElementById(`stage-cell-${synthPc}-${stageIdx}`);
+                if (stageCell) {
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'stage-content bubble-stage';
+                    contentDiv.innerHTML = "Bubble<br>(NOP)";
+                    stageCell.appendChild(contentDiv);
+                }
+            }
+        });
+    }
 
-        // Registers
-        const curReg = regData[currentCycle] || {{}};
-        const hl = regHighlights[currentCycle] || {{}};
-        for(let i=0; i<32; i++) {{
-            document.getElementById(`reg-val-${{i}}`).textContent = curReg['x'+i] || '0';
-            document.getElementById(`reg-read-${{i}}`).textContent = (hl.id_rs1===i || hl.id_rs2===i) ? '●' : '';
-            document.getElementById(`reg-write-${{i}}`).textContent = (hl.wb_rd===i && i!==0) ? '●' : '';
-        }}
+    function filterPipelineInstruction() {
+        const query = searchBox.value.toLowerCase().trim();
+        if (!query) return;
+        let matchFound = false;
+        instructionLabels.forEach((item) => {
+            const pcId = item.id;
+            const labelLower = item.label.toLowerCase();
+            const rowIds = [`instr-label-${pcId}`];
+            for (let i = 0; i < 5; i++) rowIds.push(`stage-cell-${pcId}-${i}`);
+            const match = labelLower.includes(query);
+            matchFound = matchFound || match;
+            rowIds.forEach(id => {
+                const elem = document.getElementById(id);
+                if (elem) elem.style.display = match ? '' : 'none';
+            });
+        });
+        if (!matchFound) alert("❌ No matching instruction or PC found.");
+    }
 
-        // Memory Table
-        renderMemTable();
-        
-        // Timeline Highlight
-        updateResourceDisplay(); // Re-render grid to update highlight column
-        
-        // Arrows (Next Tick)
-        setTimeout(drawArrows, 0);
-    }}
+    searchBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') filterPipelineInstruction(); });
+    function resetPipelineFilter() {
+        instructionLabels.forEach((item) => {
+            const rowIds = [`instr-label-${item.id}`];
+            for (let i = 0; i < 5; i++) rowIds.push(`stage-cell-${item.id}-${i}`);
+            rowIds.forEach(id => document.getElementById(id).style.display = '');
+        });
+    }
 
-    function drawArrows() {{
-        arrowSvg.innerHTML = ''; // Clear
-        // Basic Hazard Arrow Logic
-        for(const [pc, cycleMap] of Object.entries(pipelineData)) {{
-            const data = cycleMap[currentCycle];
-            if(data && data.stage === 'EX' && data.hazard_info) {{
-                const dest = document.getElementById(`content-${{pc}}-EX`);
-                if(!dest) continue;
-                
-                const h = data.hazard_info;
-                // Draw Forwarding Arrows
-                if(h.source_pc_mem) drawLine(document.getElementById(`content-${{h.source_pc_mem}}-MEM`), dest, 'red');
-                if(h.source_pc_wb) drawLine(document.getElementById(`content-${{h.source_pc_wb}}-WB`), dest, 'red');
-                
-                // Draw Branch Arrow
-                if(h.branch_target_synth) {{
-                    const tgt = document.getElementById(`label-${{h.branch_target_synth}}`);
-                    if(tgt) drawLine(dest, tgt, 'green');
-                }}
-            }}
-        }}
-    }}
+    function updateRegisterTable() {
+        const currentRegs = registerData[currentCycle] || {};
+        const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {};
+        const highlights = regHighlightData[currentCycle] || {};
+        for (let i = 0; i < 32; i++) {
+            const valCell = document.getElementById(`reg-val-${i}`);
+            const currentVal = currentRegs[`x${i}`] || '0x00000000';
+            const prevVal = prevRegs[`x${i}`] || '0x00000000';
+            valCell.textContent = currentVal; 
+            const readCell = document.getElementById(`reg-read-${i}`);
+            const writeCell = document.getElementById(`reg-write-${i}`);
+            readCell.textContent = ''; writeCell.textContent = '';
+            if (currentCycle >= 3) {
+                if (highlights.id_rs1 === i || highlights.id_rs2 === i) readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
+                if (i !== 0 && highlights.wb_rd === i) writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+            }
+            valCell.classList.toggle('changed', currentVal !== prevVal);
+        }
+    }
 
-    function drawLine(startElem, endElem, color) {{
-        if(!startElem || !endElem) return;
-        const svgRect = arrowSvg.getBoundingClientRect();
-        const r1 = startElem.getBoundingClientRect();
-        const r2 = endElem.getBoundingClientRect();
-        
-        const x1 = r1.left + r1.width/2 - svgRect.left;
-        const y1 = r1.top + r1.height/2 - svgRect.top;
-        const x2 = r2.left + r2.width/2 - svgRect.left;
-        const y2 = r2.top + r2.height/2 - svgRect.top;
+    const toggleResourcesBtn = document.getElementById('toggleResourcesBtn');
+    const resourcePanel = document.getElementById('resource-panel');
+    toggleResourcesBtn.addEventListener('click', () => {
+        const isHidden = resourcePanel.style.display === 'none';
+        resourcePanel.style.display = isHidden ? 'block' : 'none';
+        toggleResourcesBtn.textContent = isHidden ? 'Hide Resources' : 'Show Resources';
+        if (isHidden) updateResourceDisplay();
+    });
 
-        const line = document.createElementNS('http://www.w3.org/2000/svg','path');
-        // Simple curve
-        const d = `M ${{x1}} ${{y1}} C ${{x1}} ${{y1-30}} ${{x2}} ${{y2-30}} ${{x2}} ${{y2}}`;
-        line.setAttribute('d', d);
-        line.setAttribute('stroke', color);
-        line.setAttribute('fill', 'none');
-        line.setAttribute('stroke-width', '2');
-        arrowSvg.appendChild(line);
-    }}
-
-    function updateResourceDisplay() {{
+    function updateResourceDisplay() {
         const grid = document.getElementById('resourceDisplay');
-        const panel = document.getElementById('resource-panel');
-        if(panel.style.display === 'none') return;
-        
-        grid.innerHTML = '';
+        if (resourcePanel.style.display === 'none') return;
+        grid.innerHTML = ''; 
         const units = ["ALU", "LSU", "BRU", "MDU", "HAZ", "FLUSH", "STALL"];
-        grid.style.gridTemplateColumns = `80px repeat(${{numCycles}}, 30px)`;
-
-        // Header
-        const corner = document.createElement('div'); corner.className='grid-header sticky-corner'; corner.textContent='Unit'; grid.appendChild(corner);
-        for(let c=0; c<numCycles; c++) {{
-            const h = document.createElement('div'); h.className='grid-header timeline-tick'; h.textContent=c;
-            h.onclick = () => {{ currentCycle=c; updateView(); }};
-            if(c === currentCycle) {{ h.style.color='#ffeb3b'; h.style.borderBottom='3px solid #ffeb3b'; }}
-            grid.appendChild(h);
-        }}
-
-        // Rows
-        units.forEach(unit => {{
-            const label = document.createElement('div'); label.className='resource-row-label'; label.textContent=unit; grid.appendChild(label);
-            for(let c=0; c<numCycles; c++) {{
-                const cell = document.createElement('div'); cell.className='resource-cell';
-                if(c === currentCycle) cell.classList.add('current-cycle-column');
-                
-                let active = false;
-                // Logic to find activity
-                for(const [pc, map] of Object.entries(pipelineData)) {{
-                    const d = map[c];
-                    if(!d) continue;
-                    if(unit==='HAZ' && (d.hazard_info.forwardA || d.hazard_info.forwardB)) active=true;
-                    else if(unit==='FLUSH' && d.is_flushed) active=true;
-                    else if(unit==='STALL' && d.is_stalled) active=true;
-                    else if(d.hazard_info.resource_active && d.hazard_info.resource_active.includes(unit)) active=true;
-                }}
-                
-                if(active) cell.classList.add(`res-active-${{unit}}`);
-                grid.appendChild(cell);
-            }}
-        }});
+        const totalCols = numCycles;
+        grid.style.gridTemplateColumns = `80px repeat(${totalCols}, 30px)`;
         
-        // Auto Scroll
-        setTimeout(() => {{
-            const wrap = document.querySelector('.timeline-scroll-wrapper');
-            const target = grid.children[currentCycle+1];
-            if(wrap && target) {{
-                if(target.offsetLeft > wrap.clientWidth/2) wrap.scrollLeft = target.offsetLeft - wrap.clientWidth/2;
-            }}
-        }}, 10);
-    }}
+        const corner = document.createElement('div');
+        corner.className = 'grid-header sticky-corner';
+        corner.textContent = "Unit"; 
+        grid.appendChild(corner);
+        
+        for (let c = 0; c < numCycles; c++) {
+            const head = document.createElement('div');
+            head.className = 'grid-header timeline-tick';
+            head.textContent = c;
+            if (c === currentCycle) { head.style.color = "#ffeb3b"; head.style.borderBottom = "3px solid #ffeb3b"; }
+            head.onclick = () => { currentCycle = c; updateDisplay(); };
+            grid.appendChild(head);
+        }
 
-    function renderMemTable() {{
-        const tbody = document.getElementById('memActivityTbody');
-        tbody.innerHTML = '';
-        const m = memActivity[currentCycle];
-        if(!m) return; // or show 'no activity'
+        units.forEach(unit => {
+            const label = document.createElement('div');
+            label.className = 'resource-row-label';
+            if (unit === "HAZ") label.textContent = "FWD";
+            else if (unit === "FLUSH") label.textContent = "Flush";
+            else if (unit === "STALL") label.textContent = "Stall";
+            else label.textContent = unit;
+            grid.appendChild(label);
+
+            for (let c = 0; c < numCycles; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'resource-cell';
+                if (c === currentCycle) cell.classList.add('current-cycle-column');
+                
+                let isActive = false;
+                let tooltipText = "";
+                for (const [synthPc, cycleData] of Object.entries(pipelineData)) {
+                    const stageData = cycleData[c];
+                    if (!stageData) continue;
+                    if (unit === "HAZ") {
+                        if (stageData.stage === 'EX' && stageData.hazard_info && (stageData.hazard_info.forwardA || stageData.hazard_info.forwardB)) {
+                            isActive = true; tooltipText = "Data Hazard (Forwarding)";
+                        }
+                    } else if (unit === "FLUSH") {
+                        if (stageData.is_flushed) { isActive = true; tooltipText = "Pipeline Flush"; }
+                    } else if (unit === "STALL") {
+                        if (stageData.is_stalled) { isActive = true; tooltipText = "Pipeline Stalled"; }
+                    } else {
+                        if (stageData.hazard_info && stageData.hazard_info.resource_active) {
+                            const res = stageData.hazard_info.resource_active;
+                            const isUsing = Array.isArray(res) ? res.includes(unit) : res === unit;
+                            if (isUsing) {
+                                isActive = true;
+                                const parts = stageData.tooltip.split('\\n');
+                                tooltipText = parts.length > 2 ? parts[2] : "Active";
+                            }
+                        }
+                    }
+                    if (isActive) break; 
+                }
+                if (isActive) {
+                    cell.classList.add(`res-active-${unit}`);
+                    cell.title = `${unit} Cycle ${c}\n${tooltipText}`;
+                    cell.style.cursor = "help";
+                }
+                grid.appendChild(cell);
+            }
+        });
+        
+        setTimeout(() => {
+            const wrapper = document.querySelector('.timeline-scroll-wrapper');
+            const currentHead = grid.children[currentCycle + 1]; 
+            if (wrapper && currentHead) {
+                const scrollLeft = wrapper.scrollLeft;
+                const clientWidth = wrapper.clientWidth;
+                const elemLeft = currentHead.offsetLeft;
+                if (elemLeft < scrollLeft || elemLeft > (scrollLeft + clientWidth)) {
+                    const targetPos = elemLeft - (clientWidth / 2) + 15;
+                    wrapper.scrollTo({ left: targetPos, behavior: 'smooth' });
+                }
+            }
+        }, 10);
+    }
+
+    function drawArrow(fromElem, toElem, type) {
+        if (!fromElem || !toElem) return;
+        const svgRect = arrowSvg.getBoundingClientRect();
+        const fromRect = fromElem.getBoundingClientRect();
+        const toRect = toElem.getBoundingClientRect();
+        let startX, startY, endX, endY, d;
+        if (type === "branch") {
+            startX = fromRect.left - svgRect.left; 
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            endX = toRect.right - svgRect.left + 5; 
+            endY = toRect.top + toRect.height / 2 - svgRect.top;
+            const dist = Math.abs(startX - endX);
+            const curvePower = Math.min(dist * 0.6, 150); 
+            d = `M ${startX},${startY} C ${startX - curvePower},${startY} ${endX + curvePower},${endY} ${endX},${endY}`;
+        } else {
+            startX = fromRect.left + fromRect.width / 2 - svgRect.left;
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            endX = toRect.left + toRect.width / 2 - svgRect.left;
+            endY = toRect.top - svgRect.top; 
+            d = `M ${startX},${startY} C ${startX},${startY - 40} ${endX},${endY - 40} ${endX},${endY}`;
+        }
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        if (type === "branch") {
+            path.setAttribute('stroke', '#28a745'); 
+            path.setAttribute('stroke-width', '3'); 
+            path.setAttribute('fill', 'none');
+            path.setAttribute('marker-end', 'url(#arrowhead-branch)');
+        } else {
+            path.setAttribute('stroke', '#FF4500'); 
+            path.setAttribute('stroke-width', '2.5');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('marker-end', 'url(#arrowhead-hazard)');
+            path.setAttribute('class', 'arrow'); 
+        }
+        arrowSvg.appendChild(path);
+    }
+
+    function updateArrows() {
+        if (!showArrows) { arrowSvg.innerHTML = ''; return; }
+        arrowSvg.innerHTML = `
+            <defs>
+                <marker id="arrowhead-hazard" markerWidth="5" markerHeight="3.5" refX="0" refY="1.75" orient="auto">
+                    <polygon points="0 0, 5 1.75, 0 3.5" fill="#FF4500" />
+                </marker>
+                <marker id="arrowhead-branch" markerWidth="6" markerHeight="4" refX="4" refY="2" orient="auto">
+                    <polygon points="0 0, 6 2, 0 4" fill="#28a745" />
+                </marker>
+            </defs>`;
+        Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+            const instrCycleData = cycleData[currentCycle];
+            if (instrCycleData && instrCycleData.stage === 'EX') {
+                const hazardInfo = instrCycleData.hazard_info;
+                const toElem = document.getElementById(`content-${synthPc}-EX`);
+                if (hazardInfo.source_pc_mem !== null) drawArrow(document.getElementById(`content-${hazardInfo.source_pc_mem}-MEM`), toElem, "hazard");
+                if (hazardInfo.source_pc_wb !== null) drawArrow(document.getElementById(`content-${hazardInfo.source_pc_wb}-WB`), toElem, "hazard");
+                if (hazardInfo.branch_target_synth !== null && hazardInfo.branch_target_synth !== undefined) {
+                    const targetLabel = document.getElementById(`instr-label-${hazardInfo.branch_target_synth}`);
+                    if (targetLabel) drawArrow(toElem, targetLabel, "branch");
+                }
+            }
+        });
+    }
+
+    function renderMemActivityForCycle(cycle) {
+        memActivityTbody.innerHTML = '';
+        const entry = memActivity[cycle];
+        if (!entry) { memActivityTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No data</td></tr>'; return; }
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${{m.cycle}}</td><td>${{m.addr}}</td><td>${{m.wdata}}</td><td>${{m.rdata}}</td><td>${{m.wr_en}}</td>`;
-        tbody.appendChild(tr);
-    }}
+        let td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; td.textContent = entry.cycle; tr.appendChild(td);
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; td.textContent = (entry.addr !== undefined && entry.addr !== null) ? entry.addr : 'N/A'; tr.appendChild(td);
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; td.textContent = (entry.wdata !== undefined && entry.wdata !== null) ? entry.wdata : '—'; tr.appendChild(td);
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; td.textContent = (entry.rdata !== undefined && entry.rdata !== null) ? entry.rdata : '—'; tr.appendChild(td);
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; td.textContent = entry.wr_en ? '1' : '0'; tr.appendChild(td);
+        memActivityTbody.appendChild(tr);
+    }
 
-    // --- Listeners ---
-    document.getElementById('nextBtn').onclick = () => {{ if(currentCycle < numCycles-1) currentCycle++; updateView(); }};
-    document.getElementById('prevBtn').onclick = () => {{ if(currentCycle > 0) currentCycle--; updateView(); }};
-    document.getElementById('toggleResourcesBtn').onclick = function() {{
-        const p = document.getElementById('resource-panel');
-        const hidden = p.style.display === 'none';
-        p.style.display = hidden ? 'flex' : 'none';
-        this.textContent = hidden ? 'Hide Resources' : 'Show Resources';
-        if(hidden) updateResourceDisplay();
-    }};
-    document.getElementById('toggleMemBtn').onclick = function() {{
-        const p = document.getElementById('mem-activity-panel');
-        p.style.display = p.style.display === 'none' ? 'block' : 'none';
-    }};
-    
-    init();
+    function nextCycle() { if (currentCycle < numCycles - 1) { currentCycle++; updateDisplay(); } else { stopAnimation(); } }
+    function prevCycle() { if (currentCycle > 0) { currentCycle--; updateDisplay(); } }
+    function startAnimation() { if (animationInterval) return; playPauseBtn.textContent = 'Pause'; animationInterval = setInterval(nextCycle, animationSpeed); }
+    function stopAnimation() { clearInterval(animationInterval); animationInterval = null; playPauseBtn.textContent = 'Play'; }
+    function restartAnimation() { stopAnimation(); currentCycle = 0; updateDisplay(); }
+
+    prevBtn.addEventListener('click', prevCycle);
+    nextBtn.addEventListener('click', nextCycle);
+    restartBtn.addEventListener('click', restartAnimation);
+    playPauseBtn.addEventListener('click', () => animationInterval ? stopAnimation() : startAnimation());
+    speedControl.addEventListener('input', () => { animationSpeed = speedControl.value; speedValue.textContent = `${animationSpeed}ms`; if (animationInterval) { stopAnimation(); startAnimation(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') nextCycle(); if (e.key === 'ArrowLeft') prevCycle(); });
+    document.getElementById('toggleArrowsBtn').addEventListener('click', () => { showArrows = !showArrows; document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Forwarding' : 'Show Forwarding'; updateDisplay(); });
+    document.getElementById('toggleHazardsBtn').addEventListener('click', () => { showHazards = !showHazards; document.getElementById('toggleHazardsBtn').textContent = showHazards ? 'Hide Hazards' : 'Show Hazards'; updateDisplay(); });
+    toggleMemActivityBtn.addEventListener('click', () => { const shown = memActivityPanel.style.display !== 'none'; memActivityPanel.style.display = shown ? 'none' : 'block'; toggleMemActivityBtn.textContent = shown ? 'Show MEM Activity' : 'Hide MEM Activity'; if (!shown) renderMemActivityForCycle(currentCycle); });
+    document.getElementById('toggleSignedBtn').addEventListener('click', () => {
+        // Toggle logic if you have explicit signed classes
+    });
+
+    populateStaticGrid();
+    updateDisplay();
 </script>
-</body>
-</html>
-    """
+</body></html>
+"""
+    # Use REPLACE instead of format for safety against CSS braces
+    html = html_template
+    html = html.replace("{num_cycles}", str(sim_results["num_cycles"]))
+    html = html.replace("{pipeline_data_js}", pipeline_json)
+    html = html.replace("{instruction_labels_js}", labels_json)
+    html = html.replace("{register_data_js}", reg_json)
+    html = html.replace("{color_map_js}", color_map)
+    html = html.replace("{vcd_map_js}", map_json)
+    html = html.replace("{reg_highlight_data_js}", high_json)
+    html = html.replace("{mem_activity_js}", mem_json)
+    html = html.replace("{bubble_data_js}", bubble_json)
+    html = html.replace("{missing_signals_html}", missing_html)
     
-    # 3. Inject
-    return html_template.format(**js_data)
+    return html
