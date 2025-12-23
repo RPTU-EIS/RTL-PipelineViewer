@@ -732,9 +732,36 @@ for cycle_idx in range(num_cycles):
             if stage == "EX":
                 hazard_info["forwardA"] = forwardA
                 hazard_info["forwardB"] = forwardB
-                # Initialize target to None so JS doesn't crash if undefined
                 hazard_info["branch_target_synth"] = None 
 
+                # --- NEW: GEM5-STYLE RESOURCE INFERENCE ---
+                # We infer which Hardware Unit is active based on the Opcode/Mnemonic
+                resource_type = "IDLE"
+                
+                # Check for Load/Store Unit (LSU)
+                # We use the mnemonic OR the hardware write-enable signal
+                mem_data_check = delayed_mem_values_by_cycle[cycle_idx]
+                is_mem_write = mem_data_check.get("wrEn") or mem_data_check.get("memWr") or mem_data_check.get("io_memWr")
+                
+                if any(op in mnemonic for op in ["lw", "lb", "lh", "sw", "sb", "sh"]) or is_mem_write:
+                    resource_type = "LSU"
+                
+                # Check for Branch Unit (BRU)
+                elif any(op in mnemonic for op in ["beq", "bne", "blt", "bge", "jal", "jr", "ret"]):
+                    resource_type = "BRU"
+                
+                # Check for Multiply/Divide Unit (MDU) - Optional if you implement M extension
+                elif any(op in mnemonic for op in ["mul", "div", "rem"]):
+                    resource_type = "MDU"
+                
+                # Default to Integer ALU
+                elif mnemonic and mnemonic not in ["nop", "flush", "bubble"]:
+                    resource_type = "ALU"
+
+                # Save to hazard_info for JS
+                hazard_info["resource_active"] = resource_type
+
+                # [Keep your existing Forwarding Logic]
                 if forwardA == 1 or forwardB == 1:
                     hazard_info["source_pc_mem"] = vcd_actual_to_synthetic_pc_map.get(cycle_stage_pc[cycle_idx].get("MEM"))
                 if forwardA == 2 or forwardB == 2:
@@ -743,26 +770,22 @@ for cycle_idx in range(num_cycles):
                 ex_data = delayed_ex_values_by_cycle[cycle_idx]
                 op_a, op_b, res = ex_data.get("operandA"), ex_data.get("operandB"), ex_data.get("aluResult")
                 
-                # --- NEW LOGIC: SEPARATE DISPLAY FOR BRANCH/JUMP ---
+                # [Keep your existing Branch/Jump Logic]
                 is_branch_instr = any(op in mnemonic for op in ["beq", "bne", "blt", "bge", "bltu", "bgeu"])
                 is_jump_instr = any(op in mnemonic for op in ["jal", "jalr", "j", "jr", "ret"])
 
                 if is_branch_instr:
                     is_flushing_now = (current_controls.get("flush_if") == 1 or current_controls.get("flush_id") == 1)
-                    
-                    # --- PEEK AHEAD FIX ---
+                    # Peek ahead logic...
                     next_cycle_idx = cycle_idx + 1 if cycle_idx + 1 < num_cycles else cycle_idx
                     next_controls = control_values_by_cycle[next_cycle_idx]
-                    
                     target = next_controls.get("branch_target")
                     if target is None: target = current_controls.get("branch_target")
                     target_val = target if target is not None else 0
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
 
                     if is_flushing_now:
-                        # ✅ SAVE TARGET FOR JS ARROW (Only if taken)
                         hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
-                        
                         display = f"<strong>Taken</strong><br>⟶ {target_display}"
                         tooltip += f"\nDecision: Taken (Flush Detected)\nTarget: {target_display}"
                     else:
@@ -770,30 +793,24 @@ for cycle_idx in range(num_cycles):
                         tooltip += f"\nDecision: Not Taken\nNext: PC + 4"
 
                 elif is_jump_instr:
+                    # [Keep Jump Logic]
                     next_cycle_idx = cycle_idx + 1 if cycle_idx + 1 < num_cycles else cycle_idx
                     target = control_values_by_cycle[next_cycle_idx].get("branch_target")
                     if target is None: target = current_controls.get("branch_target") or res
-                    
                     target_val = target if target is not None else 0
                     target_display = f"0x{target_val & 0xFFFFFFFF:08x}"
-                    
-                    # ✅ SAVE TARGET FOR JS ARROW (Always for Jumps)
                     hazard_info["branch_target_synth"] = vcd_actual_to_synthetic_pc_map.get(target_val)
-
                     display = f"<strong>Jump</strong><br>⟶ {target_display}"
                     tooltip += f"\nOperation: Unconditional Jump\nTarget: {target_display}"
 
                 else:
-                    # --- STANDARD ALU DISPLAY (Arithmetic) ---
-                    # (Keep your existing ALU logic here)
+                    # [Keep ALU Logic]
                     operator_map = {"addi": "+", "add": "+", "sub": "-", "and": "&", "or": "|", "xor": "^", "sll": "<<", "srl": ">>"}
                     operator_plain = operator_map.get(mnemonic, mnemonic.upper())
-                    
                     if (op_a is not None) and (op_b is not None) and (res is not None):
                         res_signed = res if res < 0x80000000 else res - 0x100000000
                         op_a_signed = op_a if op_a < 0x80000000 else op_a - 0x100000000
                         op_b_signed = op_b if op_b < 0x80000000 else op_b - 0x100000000
-                        
                         display = f"EX<br>{op_a_signed} {operator_plain} {op_b_signed} → {res_signed}"
                         tooltip += f"\n--- ALU ---\n{op_a_signed} {operator_plain} {op_b_signed} = {res_signed}"
             
@@ -1178,6 +1195,128 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     opacity: 0.6;
 }}
 
+
+/* --- TIMELINE / RESOURCE VISUALIZATION (Centered & Fixed) --- */
+#resource-panel {{
+    margin: 20px auto;
+    width: fit-content;      /* Shrink to fit content */
+    min-width: 600px;        
+    max-width: 98%;          
+    background-color: #fff;
+    border: 1px solid #ccc;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}}
+
+.timeline-scroll-wrapper {{
+    overflow-x: auto;
+    width: 100%;
+    padding-bottom: 5px;
+}}
+
+.resource-grid {{ 
+    display: grid; 
+    gap: 0; 
+    background-color: #fff; 
+    width: max-content; 
+    border-top: 1px solid #ccc;
+    border-collapse: collapse; 
+}}
+
+/* Sticky Row Labels (First Column) */
+.resource-row-label {{ 
+    position: sticky;
+    left: 0;
+    z-index: 20; 
+    background-color: #1e3a8a; 
+    color: #fff;
+    padding: 0 8px; 
+    font-weight: 600; 
+    font-size: 12px; 
+    text-align: right; 
+    display: flex; 
+    align-items: center; 
+    justify-content: flex-end;
+    border-bottom: 1px solid #4a6fa5;
+    border-right: 1px solid #ccc; 
+    height: 26px; 
+    box-sizing: border-box; /* Include padding in width */
+}}
+
+/* Sticky Header Corner (Top Left) */
+.grid-header.sticky-corner {{
+    position: sticky;
+    left: 0;
+    z-index: 21;
+    background-color: #1e3a8a; 
+    color: #fff;
+    border: none;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid #ccc;
+    height: 26px;
+    box-sizing: border-box;
+}}
+
+.resource-cell {{ 
+    width: 100%; /* Fill the grid column */
+    height: 26px; 
+    background-color: #fff; 
+    box-sizing: border-box; 
+    border-right: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+}}
+
+/* Header Cells (Cycle Numbers) - FIXED ALIGNMENT */
+.grid-header.timeline-tick {{
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer; 
+    background-color: #1e3a8a; 
+    color: white;
+    user-select: none;
+    height: 26px;
+    width: 100%; /* Fill the grid column perfectly */
+    padding: 0;  /* Remove padding to ensure perfect center */
+    
+    /* Flexbox for absolute centering */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    border-right: 1px solid #4a6fa5;
+    box-sizing: border-box;
+}}
+.grid-header.timeline-tick:hover {{
+    background-color: #3b82f6 !important; 
+}}
+
+/* Colors */
+.res-active-ALU {{ background-color: #4b9aef !important; }}
+.res-active-LSU {{ background-color: #cf66ff !important; }}
+.res-active-BRU {{ background-color: #28a745 !important; }}
+.res-active-MDU {{ background-color: #ff9933 !important; }}
+.res-active-HAZ {{ background-color: #FF4500 !important; }}
+.res-active-FLUSH {{ background-color: #dc3545 !important; }}
+.res-active-STALL {{ 
+    background-color: #e0e0e0 !important; 
+    background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px);
+}}
+
+/* Current Cycle Highlight */
+.current-cycle-column {{
+    background-color: #fff9c4; 
+    border-left: 2px solid #ffc107 !important;
+    border-right: 2px solid #ffc107 !important;
+    z-index: 10;
+}}
+
+
 </style>
 </head>
 <body>
@@ -1200,6 +1339,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
     <button id="toggleHazardsBtn">Show Hazards</button>  
     <button id="toggleSignedBtn">Show Signed</button>
     <button id="toggleMemActivityBtn">Show MEM Activity</button>
+    <button id="toggleResourcesBtn">Show Resources</button>
 
     <div class="speed-control-container">
         <label for="speedControl">Speed:</label>
@@ -1238,14 +1378,38 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         </table>
     </div>
 
+    <div id="resource-panel" style="display: none;">
+        <div style="padding: 10px 15px; background: #f1f1f1; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; font-size: 16px; color: #333;">Execution Timeline</h3>
+            
+            <div style="font-size: 11px; display: flex; gap: 10px; margin-top: 5px;">
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#4b9aef; margin-right:4px; border:1px solid #999;"></span>ALU</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#cf66ff; margin-right:4px; border:1px solid #999;"></span>Ld/St U</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#28a745; margin-right:4px; border:1px solid #999;"></span>BRU</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#FF4500; margin-right:4px; border:1px solid #999;"></span>Forwarding</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#dc3545; margin-right:4px; border:1px solid #999;"></span>Flush</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#e0e0e0; margin-right:4px; border:1px solid #999;"></span>Stall</span>
+            </div>
+        </div>
+
+        <div class="timeline-scroll-wrapper">
+            <div id="resourceDisplay" class="resource-grid"></div>
+        </div>
+    </div>
+
     <div class="content-wrapper">
         <div class="pipeline-container">
+            
+            
+
             <h3>Pipeline Stages</h3>
             <div style="position: relative;">
                 <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
                 <svg id="arrow-svg"></svg>
             </div>
         </div>
+
+
         <div class="register-container">
             <h3>Register File State</h3>
             <div id="registerTable" class="register-grid">
@@ -1354,6 +1518,7 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
         cycleCounter.textContent = `Cycle ${{currentCycle}} / ${{numCycles - 1}}`;
         updatePipelineDisplay();
         updateRegisterTable();
+        updateResourceDisplay();
 
         if (memActivityPanel.style.display !== 'none') {{
             renderMemActivityForCycle(currentCycle);
@@ -1539,6 +1704,151 @@ body {{ font-family: sans-serif; margin: 20px; }} h2, h3 {{ text-align: center; 
                 valCell.classList.toggle('changed', currentVal !== prevVal);
             }}
         }}
+
+        
+        const toggleResourcesBtn = document.getElementById('toggleResourcesBtn');
+        const resourcePanel = document.getElementById('resource-panel');
+
+        toggleResourcesBtn.addEventListener('click', () => {{
+            const isHidden = resourcePanel.style.display === 'none';
+            resourcePanel.style.display = isHidden ? 'block' : 'none';
+            toggleResourcesBtn.textContent = isHidden ? 'Hide Resources' : 'Show Resources';
+            if (isHidden) updateResourceDisplay(); // Redraw if showing
+        }});
+
+
+        function updateResourceDisplay() {{
+        const grid = document.getElementById('resourceDisplay');
+        const resourcePanel = document.getElementById('resource-panel');
+        
+        if (resourcePanel.style.display === 'none') return;
+        
+        grid.innerHTML = ''; 
+
+        const units = ["ALU", "LSU", "BRU", "MDU", "HAZ", "FLUSH", "STALL"];
+        
+        const startCycle = 0;
+        const endCycle = numCycles;
+        const totalCols = endCycle - startCycle;
+        
+        // --- FIX: Explicit column sizing ---
+        // Label Column: 80px
+        // Data Columns: 30px each (Fixed size)
+        grid.style.gridTemplateColumns = `80px repeat(${{totalCols}}, 30px)`;
+
+        // --- Header Row ---
+        const corner = document.createElement('div');
+        corner.className = 'grid-header sticky-corner';
+        corner.textContent = "Unit"; 
+        grid.appendChild(corner);
+        
+        for (let c = startCycle; c < endCycle; c++) {{
+            const head = document.createElement('div');
+            head.className = 'grid-header timeline-tick';
+            head.textContent = c;
+            
+            if (c === currentCycle) {{
+                head.style.color = "#ffeb3b"; 
+                head.style.borderBottom = "3px solid #ffeb3b";
+            }}
+            
+            head.onclick = () => {{
+                currentCycle = c;
+                updateDisplay();
+            }};
+            grid.appendChild(head);
+        }}
+
+        // --- Data Rows ---
+        units.forEach(unit => {{
+            const label = document.createElement('div');
+            label.className = 'resource-row-label';
+            
+            if (unit === "HAZ") label.textContent = "FWD";
+            else if (unit === "FLUSH") label.textContent = "Flush";
+            else if (unit === "STALL") label.textContent = "Stall";
+            else label.textContent = unit;
+            
+            grid.appendChild(label);
+
+            for (let c = startCycle; c < endCycle; c++) {{
+                const cell = document.createElement('div');
+                cell.className = 'resource-cell';
+                
+                if (c === currentCycle) cell.classList.add('current-cycle-column');
+
+                let isActive = false;
+                let tooltipText = "";
+
+                for (const [synthPc, cycleData] of Object.entries(pipelineData)) {{
+                    const stageData = cycleData[c];
+                    if (!stageData) continue;
+
+                    // 1. HAZARD
+                    if (unit === "HAZ") {{
+                        if (stageData.stage === 'EX' && stageData.hazard_info && 
+                           (stageData.hazard_info.forwardA || stageData.hazard_info.forwardB)) {{
+                            isActive = true;
+                            tooltipText = "Data Hazard (Forwarding)";
+                        }}
+                    }}
+                    // 2. FLUSH
+                    else if (unit === "FLUSH") {{
+                        if (stageData.is_flushed) {{
+                            isActive = true;
+                            tooltipText = "Pipeline Flush";
+                        }}
+                    }}
+                    // 3. STALL
+                    else if (unit === "STALL") {{
+                        if (stageData.is_stalled) {{
+                            isActive = true;
+                            tooltipText = "Pipeline Stalled";
+                        }}
+                    }}
+                    // 4. FUNCTIONAL UNITS
+                    else {{
+                        if (stageData.stage === 'EX' && stageData.hazard_info && 
+                            stageData.hazard_info.resource_active === unit) {{
+                            isActive = true;
+                            // Safe tooltip extraction
+                            const parts = stageData.tooltip.split('\\n');
+                            tooltipText = parts.length > 2 ? parts[2] : "Active";
+                        }}
+                    }}
+                    if (isActive) break; 
+                }}
+
+                if (isActive) {{
+                    cell.classList.add(`res-active-${{unit}}`);
+                    cell.title = `${{unit}} Cycle ${{c}}\\n${{tooltipText}}`;
+                    cell.style.cursor = "help";
+                }}
+                grid.appendChild(cell);
+            }}
+        }});
+        
+        // Auto-Scroll to keep current cycle in view
+        setTimeout(() => {{
+            const wrapper = document.querySelector('.timeline-scroll-wrapper');
+            const currentHead = grid.children[currentCycle + 1]; 
+            if (wrapper && currentHead) {{
+                const scrollLeft = wrapper.scrollLeft;
+                const clientWidth = wrapper.clientWidth;
+                const elemLeft = currentHead.offsetLeft;
+                
+                // Only scroll if out of bounds to avoid jitter
+                if (elemLeft < scrollLeft || elemLeft > (scrollLeft + clientWidth)) {{
+                    const targetPos = elemLeft - (clientWidth / 2) + 15;
+                    wrapper.scrollTo({{ left: targetPos, behavior: 'smooth' }});
+                }}
+            }}
+        }}, 10);
+    }}
+    
+    
+
+
 
 
 
