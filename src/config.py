@@ -9,29 +9,53 @@ def load_config():
     parser.add_argument("-c", "--config", default="pipeline", help="Optional: Name of the JSON config file (default: pipeline).")
     args = parser.parse_args()
 
-    # --- 1. Resolve VCD File ---
     vcd_file = args.vcd_file
+    vcd_dir = "examples" # Folder where examples live
 
-    # FIX: If no argument provided, ask the user interactively
+    # --- INTERACTIVE SELECTION MODE ---
     if vcd_file is None:
-        print("ℹ️  No VCD file provided in command line.")
+        print("\nℹ️  No VCD file provided.")
+        
+        # 1. Scan the examples folder
+        available_files = []
+        if os.path.exists(vcd_dir):
+            available_files = [f for f in os.listdir(vcd_dir) if f.endswith(".vcd")]
+        
+        # 2. Display options
+        if available_files:
+            print(f"📂 Found the following examples in '{vcd_dir}/':")
+            for idx, f in enumerate(available_files, 1):
+                print(f"   [{idx}] {f}")
+            print("   [Other] Type a path manually")
+        
+        # 3. Ask user
         while True:
-            user_input = input("Please enter the VCD filename (e.g., task1.vcd): ").strip()
-            if user_input:
+            user_input = input("\nSelect a file (enter number or name): ").strip()
+            
+            if not user_input:
+                print("❌ Input cannot be empty.")
+                continue
+            
+            # Check if user typed a number (1, 2, etc.)
+            if user_input.isdigit():
+                idx = int(user_input) - 1
+                if 0 <= idx < len(available_files):
+                    vcd_file = available_files[idx]
+                    break
+                else:
+                    print("❌ Invalid number. Please try again.")
+            else:
+                # User typed a filename manually
                 vcd_file = user_input
                 break
-            print("❌ Input cannot be empty.")
 
-    # 2. Define the default folder (Relative to where you run the script)
-    # Since you run from root, "examples" points to the folder outside src
-    vcd_dir = "examples"
-
-    # 3. Smart Search Logic
+    # --- RESOLVE PATHS ---
+    # Smart Search Logic
     possible_paths = [
-        vcd_file,                                      # 1. Check current folder (Root)
-        os.path.join(vcd_dir, vcd_file),               # 2. Check examples/ folder
-        vcd_file + ".vcd",                             # 3. Check current + .vcd
-        os.path.join(vcd_dir, vcd_file + ".vcd")       # 4. Check examples/ + .vcd
+        vcd_file,                                      # 1. Exact path
+        os.path.join(vcd_dir, vcd_file),               # 2. Inside examples/
+        vcd_file + ".vcd",                             # 3. Add extension
+        os.path.join(vcd_dir, vcd_file + ".vcd")       # 4. Inside examples/ + extension
     ]
 
     final_vcd_path = None
@@ -41,18 +65,17 @@ def load_config():
             break
 
     if not final_vcd_path:
-        print(f"❌ Error: Could not find '{vcd_file}' in the current directory or inside '{vcd_dir}/'.")
-        print(f"   Checked locations: {possible_paths}")
+        print(f"\n❌ Error: Could not find '{vcd_file}'")
+        print(f"   Checked: {possible_paths}")
         sys.exit(1)
         
-    print(f"📂 Processing: {final_vcd_path}")
+    print(f"\n📂 Processing: {final_vcd_path}")
 
-    # --- 4. Resolve Config File ---
+    # --- RESOLVE JSON CONFIG ---
     config_input = args.config
     if not config_input.endswith(".json"):
         config_input += ".json"
     
-    # Since 'configs' is also in the root, simple paths work
     if os.path.exists(config_input):
         config_file = config_input
     elif os.path.exists(os.path.join("configs", config_input)):
@@ -60,16 +83,15 @@ def load_config():
     elif os.path.exists(os.path.join("configs", os.path.basename(config_input))):
         config_file = os.path.join("configs", os.path.basename(config_input))
     else:
-        config_file = config_input # Let it fail in the try-block below
+        config_file = config_input 
 
     print(f"⚙️  Using Configuration: {config_file}")
 
-    # --- 5. Load JSON ---
+    # --- LOAD JSON ---
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # Expand Templates (REG_{i})
         if "REG_TEMPLATE" in data:
             templ = data.pop("REG_TEMPLATE")
             for i in range(32):
