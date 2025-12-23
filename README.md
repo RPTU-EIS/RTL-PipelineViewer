@@ -1,3 +1,4 @@
+![CI Status](https://github.com/RPTU-EIS/RTL-PipelineViewer/actions/workflows/test.yml/badge.svg)
 # RTL Pipeline Viewer – RISC-V Visualization Tool
 
 An interactive **HTML-based visualization framework** for analyzing and debugging **RISC-V processor pipelines** using **VCD (Value Change Dump)** simulation traces.
