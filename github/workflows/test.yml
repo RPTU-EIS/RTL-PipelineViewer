@@ -13,4 +13,5 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run Test
         # Run non-interactively on the example file
-        run: python run.py examples/task1.vcd
+        run: python run.py examples/task5.vcd
+        
