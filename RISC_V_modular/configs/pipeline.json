@@ -13,7 +13,7 @@
   "INSTR_WB": [    "PipelinedRV32I.core.WBBarrier.io_outInstr",    "HazardDetectionRV32I.core.WBBarrier.instReg",    "PipelinedRV32I.core.wbBarrier.instReg"  ],
 
 
-  "EX_OPERAND_A": [    "PipelinedRV32I.core.EX.aluOpA",    "HazardDetectionRV32I.core.EX.io_operandA",    "PipelinedRV32I.core.exStage.io_data1_in"  ],
+  "EX_OPERAND_A": [    "PipelinedRV32I.core.EX.aluOpA.",    "HazardDetectionRV32I.core.EX.io_operandA.",    "PipelinedRV32I.core.exStage.io_data1_in"  ],
   "EX_OPERAND_B": [    "PipelinedRV32I.core.EX.aluOpB",    "HazardDetectionRV32I.core.EX.io_operandB",    "PipelinedRV32I.core.exStage.operandB"  ],
   "EX_ALU_RESULT": [    "PipelinedRV32I.core.EX.io_aluResult",    "HazardDetectionRV32I.core.EX.io_aluResult",    "PipelinedRV32I.core.exStage.aluResult"  ],
   "EX_UOP": [    "PipelinedRV32I.core.EX.io_ALUOp",    "HazardDetectionRV32I.core.EX.io_uop",    "PipelinedRV32I.core.exStage.io_upo_in"  ],

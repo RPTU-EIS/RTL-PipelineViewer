@@ -15,14 +15,35 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
     print(f"\n🔎 Looking for {label} signals:")
     found, missing = 0, 0
     
+    # --- LOGIC COPIED FROM TEST.PY ---
+    # We cache the list of all signals once for performance
+    all_vcd_signals = list(vcd.signals)
+
     for key, candidates in signal_dict.items():
         selected = resolve_signal(candidates, vcd)
         resolved[key] = selected
+        
         if selected:
             print(f"✅ {key} → {selected}")
             found += 1
         else:
             print(f"⚠️ {key} not found in VCD file.")
+            
+            # --- Substring-based suggestions (Exact logic from test.py) ---
+            # This checks if the missing key (e.g. "OperandA") appears inside 
+            # any VCD signal name (e.g. "core_EX_OperandA_in")
+            suggestions = [
+                sig for sig in all_vcd_signals
+                if key.lower() in sig.lower()
+            ]
+
+            if suggestions:
+                print(f"   🔍 Possible signals found in VCD that resemble '{key}':")
+                for s in suggestions[:5]:  # Limit to 5 suggestions
+                    print(f"       • {s}")
+            else:
+                print(f"   ℹ️ No similar signals found for '{key}' in VCD.")
+
             missing += 1
 
     if label not in missing_signals_by_label:
@@ -34,7 +55,11 @@ def resolve_signals_with_log(signal_dict, vcd, label="", vcd_filename="(unknown)
 
 def extract_trace(vcd_path, all_signals_raw):
     print(f"📂 Loading VCD: {vcd_path}...")
-    vcd = VCDVCD(vcd_path, store_tvs=True)
+    try:
+        vcd = VCDVCD(vcd_path, store_tvs=True)
+    except FileNotFoundError:
+        print(f"❌ Error: VCD file '{vcd_path}' not found.")
+        exit(1)
     
     # 1. Clock & Cycles
     candidates = [sig for sig in vcd.signals if "clk" in sig.lower() or "clock" in sig.lower()]
@@ -58,14 +83,20 @@ def extract_trace(vcd_path, all_signals_raw):
     stage_map = {k.replace("STAGE_", ""): v for k, v in all_signals_raw.items() if k.startswith("STAGE_")}
     instr_map = {k.replace("INSTR_", ""): v for k, v in all_signals_raw.items() if k.startswith("INSTR_")}
     stall_map = {k.replace("STALL_", ""): v for k, v in all_signals_raw.items() if k.startswith("STALL_")}
+    
     control_map = {
         "branch_taken": all_signals_raw.get("BRANCH_TAKEN"),
         "branch_target": all_signals_raw.get("BRANCH_TARGET"),
         "flush_if": all_signals_raw.get("FLUSH_IF"),
         "flush_id": all_signals_raw.get("FLUSH_ID")
     }
+    
+    # EX keys: operandA, operandB, aluResult
     ex_map = {to_camel(k.replace("EX_", "")): v for k, v in all_signals_raw.items() if k.startswith("EX_")}
+    
+    # MEM keys: addr, wdata, rdata, wrEn
     mem_map = {to_camel(k.replace("MEM_", "")): v for k, v in all_signals_raw.items() if k.startswith("MEM_")}
+    
     wb_map = {k.replace("WB_", "").lower(): v for k, v in all_signals_raw.items() if k.startswith("WB_")}
     
     hazard_map = {}
@@ -76,7 +107,7 @@ def extract_trace(vcd_path, all_signals_raw):
             
     reg_map = {k: v for k, v in all_signals_raw.items() if k.startswith("x")}
 
-    # 3. Resolve
+    # 3. Resolve (Using the updated Logic)
     stage_signals = resolve_signals_with_log(stage_map, vcd, "Stage", vcd_path)
     instr_signals = resolve_signals_with_log(instr_map, vcd, "Instruction", vcd_path)
     ex_signals = resolve_signals_with_log(ex_map, vcd, "EX", vcd_path)
@@ -138,7 +169,7 @@ def extract_trace(vcd_path, all_signals_raw):
             "stage": stage_signals,
             "instr": instr_signals
         },
-        "vcd_obj": vcd, # Needed for raw binary extraction of instructions
+        "vcd_obj": vcd, 
         "rising_edges": rising_edges,
         "missing_report": missing_signals_by_label
     }
