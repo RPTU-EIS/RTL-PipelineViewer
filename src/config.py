@@ -2,6 +2,24 @@ import argparse
 import json
 import os
 import sys
+import re
+
+def remove_comments(json_str):
+    """
+    Removes C-style // comments from a JSON string.
+    This allows students to annotate their config files.
+    """
+    # Regex to capture // comments but ignore URLs (like http://) 
+    # or markers inside strings. For simplicity in this context, 
+    # we just strip everything after // on a line.
+    lines = json_str.splitlines()
+    clean_lines = []
+    for line in lines:
+        # Split on // and keep the first part
+        if "//" in line:
+            line = line.split("//")[0]
+        clean_lines.append(line)
+    return "\n".join(clean_lines)
 
 def load_config():
     parser = argparse.ArgumentParser(description="Generate an HTML animation for a pipelined RISC-V processor from a VCD file.")
@@ -87,10 +105,16 @@ def load_config():
 
     print(f"⚙️  Using Configuration: {config_file}")
 
-    # --- LOAD JSON ---
+    # --- LOAD JSON (With Comment Support) ---
     try:
         with open(config_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw_content = f.read()
+            
+        # 1. Clean the content (Remove comments)
+        clean_content = remove_comments(raw_content)
+        
+        # 2. Parse JSON
+        data = json.loads(clean_content)
         
         if "REG_TEMPLATE" in data:
             templ = data.pop("REG_TEMPLATE")
@@ -107,6 +131,10 @@ def load_config():
             "config_path": config_file
         }
 
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Syntax Error in '{config_file}':")
+        print(f"   Line {e.lineno}: {e.msg}")
+        sys.exit(1)
     except Exception as e:
         print(f"❌ Error loading config: {e}")
         sys.exit(1)

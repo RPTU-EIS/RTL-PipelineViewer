@@ -6,3 +6,38 @@ __pycache__/
 *.pyc
 # Ignore configuration files
 *.ini
+.DS_Store
+
+# --- Scala & sbt (Build tool) ---
+target/
+project/target/
+project/project/
+.bsp/
+.scala-build/
+
+# --- IDE Settings (VS Code, IntelliJ) ---
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# --- Chisel / Hardware Generation Outputs ---
+# Generated Verilog/SystemVerilog files
+*.v
+*.sv
+
+
+# FIRRTL intermediate representation files
+*.fir
+*.anno.json
+
+# --- Simulation & Testing Artifacts ---
+# ChiselTest default output directory (Creates massive logs)
+test_run_dir/
+
+# Waveform files (Generated during simulation)
+*.vpd
+*.fsdb
+
+# --- C/C++ Verilator Outputs (If used) ---
+obj_dir/
