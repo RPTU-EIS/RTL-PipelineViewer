@@ -1,0 +1,150 @@
+# The single source of truth for the entire debug view.
+# We wrap everything in ONE root group.
+# Signal Organization (add, remove, move signals and groups as needed to fit your design and debugging needs.
+# Name without spaces for easier parsing.
+# No repetitions of names at the same hierarchical level.
+# Use subgroups to create hierarchy.
+
+groups:
+  - name: "RISC_V_Debug_View"  # <-- THE NEW SINGLE ROOT GROUP 
+    subgroups:
+      
+      # Group 1: High-level clock and reset
+      - name: "Global"
+        signals:
+          - path: "PipelinedRV32I.clock" 
+            name: "clock"
+          - path: "PipelinedRV32I.core.io_check_res" 
+            name: "check_res"
+          
+      # Group 2: Follow an instruction through the pipeline stages
+      - name: "Pipeline_Stages"
+        signals:
+        subgroups:
+          - name: "IF"
+            signals:
+            subgroups:
+              - name: "IF_Stage"
+                signals:
+                 - path: "PipelinedRV32I.core.ifStage.pc" 
+                   name: "IF_Program_Counter"
+                 - path: "PipelinedRV32I.core.ifStage.io_inst_out" 
+                   name: "IF_Fetched_Instruction"
+              - name: "IF_Barrier"
+                signals:
+                  - path: "PipelinedRV32I.core.ifBarrier.io_pc_out" 
+                    name: "Program_Counter"
+                  - path: "PipelinedRV32I.core.ifBarrier.io_inst_out" 
+                    name: "Fetched_Instruction"
+          - name: "--------------------" 
+            signals: [] 
+          
+          
+          - name: "ID"
+            signals:
+            subgroups:
+            - name: "ID_Stage"
+              signals:
+              subgroups:
+                - name: "Decoded_Instruction"
+                  signals:
+                    - path: "PipelinedRV32I.core.idStage.opcode" 
+                      name: "opcode"
+                    - path: "PipelinedRV32I.core.idStage.funct3" 
+                      name: "funct3"
+                    - path: "PipelinedRV32I.core.idStage.funct7" 
+                      name: "funct7"
+                    - path: "PipelinedRV32I.core.idStage.rs1" 
+                      name: "rs1"
+                    - path: "PipelinedRV32I.core.idStage.rs2" 
+                      name: "rs2"
+                    - path: "PipelinedRV32I.core.idStage.rd" 
+                      name: "rd"
+                    - path: "PipelinedRV32I.core.idStage.io_upo" 
+                      name: "io_uop" 
+
+
+                - name: "Operands_from_RL"
+                  signals:
+                    - path: "PipelinedRV32I.core.idStage.io_data1_out" 
+                      name: "Operand_A"
+                    - path: "PipelinedRV32I.core.idStage.io_data2_out" 
+                      name: "Operand_B"
+
+            - name: "ID_Barrier"
+              signals:
+              - path: "PipelinedRV32I.core.idBarrier.data1Reg" 
+                name: "Operand_A_IDB"
+              - path: "PipelinedRV32I.core.idBarrier.data1Reg" 
+                name: "Operand_B_IDB"
+              - path: "PipelinedRV32I.core.idBarrier.rdReg"
+                name: "rd_IDB"
+              - path: "PipelinedRV32I.core.idBarrier.rs1" 
+                name: "rs1_IDB"
+              - path: "PipelinedRV32I.core.idBarrier.rs2" 
+                name: "rs2_IDB"
+              - path: "PipelinedRV32I.core.idBarrier.upoReg" 
+                name: "uop_IDB"
+      
+            -  name: "-----------------"
+               signals: []
+            
+
+
+          - name: "EX"
+            signals:
+            subgroups:
+              - name: "EX_Stage"
+                signals:
+                - path: "PipelinedRV32I.core.exStage.io_data1_in" 
+                  name: "ALU_Input_A"
+                - path: "PipelinedRV32I.core.exStage.operandB" 
+                  name: "ALU_Input_B"
+                - path: "PipelinedRV32I.core.exStage.aluResult" 
+                  name: "ALU_Result"
+                - path: "PipelinedRV32I.core.exStage.io_upo_in" 
+                  name: "ALU_Result_UOP"
+              
+              - name: "EX_Barrier"
+                signals:
+                - path: "PipelinedRV32I.core.exBarrier.aluReg" 
+                  name: "ALU_Result_Barrier"
+                
+          - name: "----------------"
+            signals: [] 
+
+          - name: "MEM"
+          #  signals:
+          #  subgroups:
+          #    - name: "MEM_Stage"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.MEM.aluResult"
+          #        name: "ALU_Result_MEM"
+          #    - name: "MEM_Barrier"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.MEMBarrier.aluResult"
+          #        name: "ALU_Result_Barrier_MEM"
+
+          #- name: "WB"
+          #  signals:
+          #  subgroups:
+          #    - name: "WB_Stage"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.WB.aluResult"
+          #        name: "ALU_Result_WB"
+          #    - name: "WB_Barrier"
+          #      signals:
+          #      - path: "HazardDetectionRV32I.core.WBBarrier.aluResult"
+          #        name: "ALU_Result_Barrier_WB"
+                  
+      
+# --- STRING IN ASCII ---
+derived_strings:
+  - source_path: "PipelinedRV32I.core.idBarrier.upoReg"  
+    new_signal_name: "uop_ascii"                
+    string_width_chars: 8                         
+
+  - source_path: "PipelinedRV32I.core.exStage.io_upo_in"
+    new_signal_name: "UOP_ASCII"                
+    string_width_chars: 8                         
+# --- END SECTION ---
