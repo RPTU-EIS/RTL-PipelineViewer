@@ -1,0 +1,373 @@
+
+<!DOCTYPE html>
+<html><head><title>Pipeline & Register Animation</title>
+<style>
+body { font-family: sans-serif; margin: 20px; background-color: #f9f9f9; }
+h2, h3 { text-align: center; color: #333; }
+
+/* --- Controls & Layout --- */
+.controls { text-align: center; margin: 20px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.controls button { padding: 8px 16px; font-size: 14px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; transition: background 0.2s; }
+.controls button:hover { background: #eef; }
+#cycleCounter { font-size: 18px; font-weight: bold; margin: 0 15px; align-self: center; }
+
+.content-wrapper { display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; margin-top: 20px; }
+
+/* --- Resource Timeline (Fixed & Centered) --- */
+#resource-panel {
+    margin: 20px auto;
+    width: fit-content;
+    min-width: 600px; max-width: 98%;
+    background-color: #fff; border: 1px solid #ccc;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-radius: 5px;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.timeline-scroll-wrapper { overflow-x: auto; width: 100%; padding-bottom: 5px; }
+.resource-grid { display: grid; gap: 0; background-color: #fff; width: max-content; border-top: 1px solid #ccc; border-collapse: collapse; }
+
+.resource-row-label { 
+    position: sticky; left: 0; z-index: 20; 
+    background-color: #1e3a8a; color: #fff; padding: 0 8px; 
+    font-weight: 600; font-size: 12px; text-align: right; 
+    display: flex; align-items: center; justify-content: flex-end;
+    border-bottom: 1px solid #4a6fa5; border-right: 1px solid #ccc; height: 26px; box-sizing: border-box;
+}
+.grid-header.sticky-corner {
+    position: sticky; left: 0; z-index: 21; background-color: #1e3a8a; color: #fff;
+    border: none; font-size: 12px; display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid #ccc; height: 26px; box-sizing: border-box;
+}
+.resource-cell { width: 100%; height: 26px; background-color: #fff; box-sizing: border-box; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }
+
+.grid-header.timeline-tick {
+    font-size: 11px; font-weight: bold; cursor: pointer; 
+    background-color: #1e3a8a; color: white; user-select: none;
+    height: 26px; width: 100%; padding: 0; display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid #4a6fa5; box-sizing: border-box;
+}
+.grid-header.timeline-tick:hover { background-color: #3b82f6 !important; }
+
+/* Resource Colors */
+.res-active-ALU { background-color: #4b9aef !important; }
+.res-active-LSU { background-color: #cf66ff !important; }
+.res-active-BRU { background-color: #28a745 !important; }
+.res-active-MDU { background-color: #ff9933 !important; }
+.res-active-HAZ { background-color: #FF4500 !important; }
+.res-active-FLUSH { background-color: #dc3545 !important; }
+.res-active-STALL { background-color: #e0e0e0 !important; background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px); }
+.current-cycle-column { background-color: #fff9c4; border-left: 2px solid #ffc107 !important; border-right: 2px solid #ffc107 !important; z-index: 10; }
+
+/* --- Pipeline & Register Grids --- */
+.pipeline-grid { display: grid; border: 1px solid #ccc; width: fit-content; grid-template-columns: 350px repeat(5, 100px); }
+.register-grid { display: grid; border: 1px solid #ccc; width: fit-content; grid-template-columns: 100px 180px 80px 80px; }
+
+.grid-header, .grid-cell { padding: 6px; border: 1px solid #eee; text-align: center; white-space: nowrap; font-size: 13px; }
+.grid-header { background-color: #ddd; font-weight: bold; }
+.instruction-label { text-align: left; font-family: monospace; font-weight: bold; padding-left: 10px; }
+
+.stage-content { 
+    width: 90%; height: 90%; border-radius: 4px; margin: auto; 
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 11px; color: #333; cursor: help; font-family: monospace;
+}
+.stalled-stage { border: 2px solid red; background-image: repeating-linear-gradient(45deg, #fff0f0, #fff0f0 10px, #ffe0e0 10px, #ffe0e0 20px); }
+.flushed-stage { background-color: #ffcccc !important; text-decoration: line-through; opacity: 0.7; }
+.bubble-stage { background-color: #eee !important; border: 2px dashed #bbb; color: #777; font-style: italic; }
+
+/* Arrow Overlay */
+#arrow-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
+
+/* Memory Activity Table */
+#memActivityTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+#memActivityTable th { background-color: #1e3a8a; color: white; padding: 8px; }
+#memActivityTable td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+
+</style>
+</head>
+<body>
+
+<h2>RISC-V Pipeline Visualizer</h2>
+
+
+<div class="controls">
+    <button id="prevBtn">Previous</button>
+    <span id="cycleCounter">Cycle 0</span>
+    <button id="nextBtn">Next</button>
+    <button id="playPauseBtn">Play</button>
+    <button id="toggleResourcesBtn">Hide Resources</button>
+    <button id="toggleMemBtn">Show Memory</button>
+    <input type="range" id="speedControl" min="100" max="1000" value="500">
+</div>
+
+<div id="resource-panel">
+    <div style="padding: 10px; background: #f1f1f1; display:flex; justify-content:space-between; border-bottom:1px solid #ddd;">
+        <h3 style="margin:0; font-size:14px;">Execution Timeline</h3>
+        <div style="font-size:11px; display:flex; gap:10px;">
+            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#4b9aef;margin-right:4px;"></span>ALU</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#cf66ff;margin-right:4px;"></span>LSU</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#28a745;margin-right:4px;"></span>BRU</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#FF4500;margin-right:4px;"></span>Hazard</span>
+            <span style="display:flex; align-items:center;"><span style="width:10px;height:10px;background:#e0e0e0;margin-right:4px;"></span>Stall</span>
+        </div>
+    </div>
+    <div class="timeline-scroll-wrapper"><div id="resourceDisplay" class="resource-grid"></div></div>
+</div>
+
+<div id="mem-activity-panel" style="display:none; max-width:800px; margin:20px auto;">
+    <h3>Memory Activity</h3>
+    <table id="memActivityTable">
+        <thead><tr><th>Cycle</th><th>Address</th><th>Write Data</th><th>Read Data</th><th>WrEn</th></tr></thead>
+        <tbody id="memActivityTbody"></tbody>
+    </table>
+</div>
+
+<div class="content-wrapper">
+    <div class="pipeline-container">
+        <h3>Pipeline Stages</h3>
+        <div style="position: relative;">
+            <div id="pipelineDisplay" class="pipeline-grid"></div>
+            <svg id="arrow-svg"></svg>
+        </div>
+    </div>
+    <div class="register-container">
+        <h3>Register File</h3>
+        <div id="registerTable" class="register-grid">
+            <div class="grid-header">Reg</div><div class="grid-header">Val</div><div class="grid-header">Rd</div><div class="grid-header">Wr</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Data Injection ---
+    const pipelineData = {"4": [null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 4\naddi ra, zero, 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 4\naddi ra, zero, 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 4\naddi ra, zero, 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 4\naddi ra, zero, 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 4\naddi ra, zero, 4", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "8": [null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 8\naddi sp, zero, 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 8\naddi sp, zero, 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 8\naddi sp, zero, 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 8\naddi sp, zero, 5", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 8\naddi sp, zero, 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "12": [null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: c\nadd gp, ra, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: c\nadd gp, ra, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: c\nadd gp, ra, sp", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: c\nadd gp, ra, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: c\nadd gp, ra, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "16": [null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 10\naddi tp, zero, 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 10\naddi tp, zero, 2047", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 10\naddi tp, zero, 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 10\naddi tp, zero, 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 10\naddi tp, zero, 2047", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "20": [null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 14\naddi t0, zero, 16", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 14\naddi t0, zero, 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 14\naddi t0, zero, 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 14\naddi t0, zero, 16", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 14\naddi t0, zero, 16", "hazard_info": {"forwardA": 1, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "24": [null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 18\nsub t1, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 18\nsub t1, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 18\nsub t1, tp, t0", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 18\nsub t1, tp, t0", "hazard_info": {"forwardA": 1, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 18\nsub t1, tp, t0", "hazard_info": {"forwardA": 2, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": true}, null, null, null, null, null, null, null, null, null, null, null, null, null], "28": [null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 1c\nxor t2, t1, gp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 1c\nxor t2, t1, gp", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 1c\nxor t2, t1, gp", "hazard_info": {"forwardA": 1, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 1c\nxor t2, t1, gp", "hazard_info": {"forwardA": 2, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 1c\nxor t2, t1, gp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null, null], "32": [null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 20\nor s0, t1, t0", "hazard_info": {"forwardA": 2, "forwardB": 1, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 20\nor s0, t1, t0", "hazard_info": {"forwardA": 1, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 20\nor s0, t1, t0", "hazard_info": {"forwardA": 2, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 20\nor s0, t1, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 20\nor s0, t1, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null, null], "36": [null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 24\nand s1, t1, t0", "hazard_info": {"forwardA": 1, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 24\nand s1, t1, t0", "hazard_info": {"forwardA": 2, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 24\nand s1, t1, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 24\nand s1, t1, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 24\nand s1, t1, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null, null], "40": [null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 28\nsll a0, t2, sp", "hazard_info": {"forwardA": 2, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 28\nsll a0, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 28\nsll a0, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 28\nsll a0, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 28\nsll a0, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null, null], "44": [null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 2c\nsrl a1, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 2c\nsrl a1, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 2c\nsrl a1, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 2c\nsrl a1, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 2c\nsrl a1, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null, null], "48": [null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 30\nsra a2, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 30\nsra a2, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 30\nsra a2, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 30\nsra a2, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 30\nsra a2, t2, sp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null, null], "52": [null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 34\nslt a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 34\nslt a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 34\nslt a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 34\nslt a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 34\nslt a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null, null], "56": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 38\nslt a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 38\nslt a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 38\nslt a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 38\nslt a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 38\nslt a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null, null], "60": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 3c\nslt a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 3c\nslt a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 3c\nslt a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 3c\nslt a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 3c\nslt a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null, null], "64": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 40\nsltu a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 40\nsltu a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 40\nsltu a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 40\nsltu a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 40\nsltu a3, tp, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null, null], "68": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 44\nsltu a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 44\nsltu a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 44\nsltu a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 44\nsltu a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 44\nsltu a3, tp, t0", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null, null], "72": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "display_text": "IF", "tooltip": "PC: 48\nsltu a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "ID", "display_text": "ID", "tooltip": "PC: 48\nsltu a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "EX", "display_text": "EX", "tooltip": "PC: 48\nsltu a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": ["ALU"]}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "MEM", "display_text": "MEM", "tooltip": "PC: 48\nsltu a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, {"stage": "WB", "display_text": "WB", "tooltip": "PC: 48\nsltu a3, t0, tp", "hazard_info": {"forwardA": 0, "forwardB": 0, "resource_active": []}, "is_stalled": false, "is_flushed": false, "is_hazard_source": false}, null]};
+    const instrLabels = [{"id": 4, "label": "PC_0x00000004 | 00400093 (addi ra, zero, 4)"}, {"id": 8, "label": "PC_0x00000008 | 00500113 (addi sp, zero, 5)"}, {"id": 12, "label": "PC_0x0000000c | 002081b3 (add gp, ra, sp)"}, {"id": 16, "label": "PC_0x00000010 | 7ff00213 (addi tp, zero, 2047)"}, {"id": 20, "label": "PC_0x00000014 | 01000293 (addi t0, zero, 16)"}, {"id": 24, "label": "PC_0x00000018 | 40520333 (sub t1, tp, t0)"}, {"id": 28, "label": "PC_0x0000001c | 003343b3 (xor t2, t1, gp)"}, {"id": 32, "label": "PC_0x00000020 | 00536433 (or s0, t1, t0)"}, {"id": 36, "label": "PC_0x00000024 | 005374b3 (and s1, t1, t0)"}, {"id": 40, "label": "PC_0x00000028 | 00239533 (sll a0, t2, sp)"}, {"id": 44, "label": "PC_0x0000002c | 0023d5b3 (srl a1, t2, sp)"}, {"id": 48, "label": "PC_0x00000030 | 4023d633 (sra a2, t2, sp)"}, {"id": 52, "label": "PC_0x00000034 | 004226b3 (slt a3, tp, tp)"}, {"id": 56, "label": "PC_0x00000038 | 005226b3 (slt a3, tp, t0)"}, {"id": 60, "label": "PC_0x0000003c | 0042a6b3 (slt a3, t0, tp)"}, {"id": 64, "label": "PC_0x00000040 | 004236b3 (sltu a3, tp, tp)"}, {"id": 68, "label": "PC_0x00000044 | 005236b3 (sltu a3, tp, t0)"}, {"id": 72, "label": "PC_0x00000048 | 0042b6b3 (sltu a3, t0, tp)"}];
+    const regData = {"0": {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "1": {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "2": {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "3": {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "4": {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "5": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "6": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "7": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "8": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "9": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "10": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "11": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "12": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "13": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "14": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "15": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "16": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "17": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "18": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "19": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "20": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "21": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "22": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, "23": {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}};
+    const numCycles = 24;
+    const colorMap = {"IF": "#ff9933", "ID": "#5cd65c", "EX": "#4b9aefd7", "MEM": "#cf66ffb9", "WB": "#ff2525c6"};
+    const regHighlights = [{"id_rs1": null, "id_rs2": null, "wb_rd": null}, {"id_rs1": 0, "id_rs2": 0, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": 0, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": 4, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": 5, "wb_rd": 0}, {"id_rs1": 1, "id_rs2": 2, "wb_rd": 1}, {"id_rs1": 0, "id_rs2": 31, "wb_rd": 2}, {"id_rs1": 0, "id_rs2": 16, "wb_rd": 3}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 4}, {"id_rs1": 6, "id_rs2": 3, "wb_rd": 5}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 6}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 7}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 8}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 9}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 10}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 11}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 12}, {"id_rs1": 5, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 13}, {"id_rs1": 5, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": 0, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": 0, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": 0, "wb_rd": 0}];
+    const memActivity = [];
+    const bubbleData = {};
+
+    // --- State ---
+    let currentCycle = 0;
+    let isPlaying = false;
+    let timer = null;
+    let speed = 500;
+
+    // --- UI References ---
+    const display = document.getElementById('pipelineDisplay');
+    const regTable = document.getElementById('registerTable');
+    const arrowSvg = document.getElementById('arrow-svg');
+    
+    // --- Setup ---
+    function init() {
+        // Headers
+        ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(t => {
+            const d = document.createElement('div'); d.className='grid-header'; d.textContent=t; display.appendChild(d);
+        });
+        
+        // Pipeline Grid
+        instrLabels.forEach(item => {
+            const label = document.createElement('div'); label.className='grid-cell instruction-label';
+            label.textContent = item.label; label.id = `label-${item.id}`; display.appendChild(label);
+            for(let i=0; i<5; i++) {
+                const cell = document.createElement('div'); cell.className='grid-cell'; cell.id = `cell-${item.id}-${i}`;
+                display.appendChild(cell);
+            }
+        });
+
+        // Register Grid
+        for(let i=0; i<32; i++) {
+            ['x'+i, '0x0', '', ''].forEach((txt, idx) => {
+                const d = document.createElement('div'); d.className='grid-cell'; 
+                if(idx===1) d.id = `reg-val-${i}`;
+                if(idx===2) d.id = `reg-read-${i}`;
+                if(idx===3) d.id = `reg-write-${i}`;
+                d.textContent = idx===0 ? `x${i}` : txt;
+                regTable.appendChild(d);
+            });
+        }
+        
+        updateView();
+        updateResourceDisplay();
+    }
+
+    function updateView() {
+        document.getElementById('cycleCounter').textContent = `Cycle ${currentCycle} / ${numCycles-1}`;
+        
+        // Clear old
+        document.querySelectorAll('.stage-content').forEach(e => e.remove());
+        
+        // Pipeline
+        for(const [pc, cycleMap] of Object.entries(pipelineData)) {
+            const data = cycleMap[currentCycle];
+            if(data) {
+                const stageIdx = {'IF':0,'ID':1,'EX':2,'MEM':3,'WB':4}[data.stage];
+                const cell = document.getElementById(`cell-${pc}-${stageIdx}`);
+                if(cell) {
+                    const div = document.createElement('div');
+                    div.className = 'stage-content';
+                    div.style.backgroundColor = colorMap[data.stage];
+                    div.innerHTML = data.display_text;
+                    div.id = `content-${pc}-${data.stage}`; // For arrows
+                    if(data.is_stalled) div.classList.add('stalled-stage');
+                    if(data.is_flushed) div.classList.add('flushed-stage');
+                    cell.appendChild(div);
+                }
+            }
+            // Bubbles
+            if(bubbleData[pc] && bubbleData[pc][currentCycle]) {
+                const stage = bubbleData[pc][currentCycle];
+                const sIdx = {'IF':0,'ID':1,'EX':2,'MEM':3,'WB':4}[stage];
+                const cell = document.getElementById(`cell-${pc}-${sIdx}`);
+                if(cell) {
+                    const div = document.createElement('div'); div.className='stage-content bubble-stage';
+                    div.innerHTML='Bubble'; cell.appendChild(div);
+                }
+            }
+        }
+
+        // Registers
+        const curReg = regData[currentCycle] || {};
+        const hl = regHighlights[currentCycle] || {};
+        for(let i=0; i<32; i++) {
+            document.getElementById(`reg-val-${i}`).textContent = curReg['x'+i] || '0';
+            document.getElementById(`reg-read-${i}`).textContent = (hl.id_rs1===i || hl.id_rs2===i) ? '●' : '';
+            document.getElementById(`reg-write-${i}`).textContent = (hl.wb_rd===i && i!==0) ? '●' : '';
+        }
+
+        // Memory Table
+        renderMemTable();
+        
+        // Timeline Highlight
+        updateResourceDisplay(); // Re-render grid to update highlight column
+        
+        // Arrows (Next Tick)
+        setTimeout(drawArrows, 0);
+    }
+
+    function drawArrows() {
+        arrowSvg.innerHTML = ''; // Clear
+        // Basic Hazard Arrow Logic
+        for(const [pc, cycleMap] of Object.entries(pipelineData)) {
+            const data = cycleMap[currentCycle];
+            if(data && data.stage === 'EX' && data.hazard_info) {
+                const dest = document.getElementById(`content-${pc}-EX`);
+                if(!dest) continue;
+                
+                const h = data.hazard_info;
+                // Draw Forwarding Arrows
+                if(h.source_pc_mem) drawLine(document.getElementById(`content-${h.source_pc_mem}-MEM`), dest, 'red');
+                if(h.source_pc_wb) drawLine(document.getElementById(`content-${h.source_pc_wb}-WB`), dest, 'red');
+                
+                // Draw Branch Arrow
+                if(h.branch_target_synth) {
+                    const tgt = document.getElementById(`label-${h.branch_target_synth}`);
+                    if(tgt) drawLine(dest, tgt, 'green');
+                }
+            }
+        }
+    }
+
+    function drawLine(startElem, endElem, color) {
+        if(!startElem || !endElem) return;
+        const svgRect = arrowSvg.getBoundingClientRect();
+        const r1 = startElem.getBoundingClientRect();
+        const r2 = endElem.getBoundingClientRect();
+        
+        const x1 = r1.left + r1.width/2 - svgRect.left;
+        const y1 = r1.top + r1.height/2 - svgRect.top;
+        const x2 = r2.left + r2.width/2 - svgRect.left;
+        const y2 = r2.top + r2.height/2 - svgRect.top;
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+        // Simple curve
+        const d = `M ${x1} ${y1} C ${x1} ${y1-30} ${x2} ${y2-30} ${x2} ${y2}`;
+        line.setAttribute('d', d);
+        line.setAttribute('stroke', color);
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke-width', '2');
+        arrowSvg.appendChild(line);
+    }
+
+    function updateResourceDisplay() {
+        const grid = document.getElementById('resourceDisplay');
+        const panel = document.getElementById('resource-panel');
+        if(panel.style.display === 'none') return;
+        
+        grid.innerHTML = '';
+        const units = ["ALU", "LSU", "BRU", "MDU", "HAZ", "FLUSH", "STALL"];
+        grid.style.gridTemplateColumns = `80px repeat(${numCycles}, 30px)`;
+
+        // Header
+        const corner = document.createElement('div'); corner.className='grid-header sticky-corner'; corner.textContent='Unit'; grid.appendChild(corner);
+        for(let c=0; c<numCycles; c++) {
+            const h = document.createElement('div'); h.className='grid-header timeline-tick'; h.textContent=c;
+            h.onclick = () => { currentCycle=c; updateView(); };
+            if(c === currentCycle) { h.style.color='#ffeb3b'; h.style.borderBottom='3px solid #ffeb3b'; }
+            grid.appendChild(h);
+        }
+
+        // Rows
+        units.forEach(unit => {
+            const label = document.createElement('div'); label.className='resource-row-label'; label.textContent=unit; grid.appendChild(label);
+            for(let c=0; c<numCycles; c++) {
+                const cell = document.createElement('div'); cell.className='resource-cell';
+                if(c === currentCycle) cell.classList.add('current-cycle-column');
+                
+                let active = false;
+                // Logic to find activity
+                for(const [pc, map] of Object.entries(pipelineData)) {
+                    const d = map[c];
+                    if(!d) continue;
+                    if(unit==='HAZ' && (d.hazard_info.forwardA || d.hazard_info.forwardB)) active=true;
+                    else if(unit==='FLUSH' && d.is_flushed) active=true;
+                    else if(unit==='STALL' && d.is_stalled) active=true;
+                    else if(d.hazard_info.resource_active && d.hazard_info.resource_active.includes(unit)) active=true;
+                }
+                
+                if(active) cell.classList.add(`res-active-${unit}`);
+                grid.appendChild(cell);
+            }
+        });
+        
+        // Auto Scroll
+        setTimeout(() => {
+            const wrap = document.querySelector('.timeline-scroll-wrapper');
+            const target = grid.children[currentCycle+1];
+            if(wrap && target) {
+                if(target.offsetLeft > wrap.clientWidth/2) wrap.scrollLeft = target.offsetLeft - wrap.clientWidth/2;
+            }
+        }, 10);
+    }
+
+    function renderMemTable() {
+        const tbody = document.getElementById('memActivityTbody');
+        tbody.innerHTML = '';
+        const m = memActivity[currentCycle];
+        if(!m) return; // or show 'no activity'
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${m.cycle}</td><td>${m.addr}</td><td>${m.wdata}</td><td>${m.rdata}</td><td>${m.wr_en}</td>`;
+        tbody.appendChild(tr);
+    }
+
+    // --- Listeners ---
+    document.getElementById('nextBtn').onclick = () => { if(currentCycle < numCycles-1) currentCycle++; updateView(); };
+    document.getElementById('prevBtn').onclick = () => { if(currentCycle > 0) currentCycle--; updateView(); };
+    document.getElementById('toggleResourcesBtn').onclick = function() {
+        const p = document.getElementById('resource-panel');
+        const hidden = p.style.display === 'none';
+        p.style.display = hidden ? 'flex' : 'none';
+        this.textContent = hidden ? 'Hide Resources' : 'Show Resources';
+        if(hidden) updateResourceDisplay();
+    };
+    document.getElementById('toggleMemBtn').onclick = function() {
+        const p = document.getElementById('mem-activity-panel');
+        p.style.display = p.style.display === 'none' ? 'block' : 'none';
+    };
+    
+    init();
+</script>
+</body>
+</html>
+    

@@ -1,0 +1,1102 @@
+
+<html><head><title>Pipeline & Register Animation</title>
+<style>
+body { font-family: sans-serif; margin: 20px; } h2, h3 { text-align: center; }
+.header-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* This will horizontally center all content in the container */
+    width: 100%;
+}
+.controls { text-align: center; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls button { padding: 10px 20px; font-size: 16px; cursor: pointer; } #cycleCounter { font-size: 18px; font-weight: bold; }
+.speed-control-container { display: flex; align-items: center; gap: 5px; }
+#speedValue { font-family: monospace; font-size: 14px; min-width: 50px; text-align: left; }
+.content-wrapper { display: flex; justify-content: center; align-items: flex-start; gap: 50px; flex-wrap: wrap; }
+.pipeline-grid, .register-grid { display: grid; border: 1px solid #ccc; width: fit-content; }
+.pipeline-grid { grid-template-columns: 380px repeat(5, 120px); }
+.register-grid { grid-template-columns: 110px 210px 95px 95px;}
+.grid-cell span {    font-size: 16px; font-weight: bold;}
+//.grid-cell.stage-cell {
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.5;
+    font-family: "Courier New", monospace;
+    padding: 10px;
+    text-align: center;
+    white-space: normal;
+}
+.register-grid .grid-cell {
+    height: 20px;             
+    line-height: 40px;        
+    overflow: hidden;          
+}
+.register-grid .grid-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.grid-header, .grid-cell { padding: 8px; border: 1px solid #eee; text-align: center; white-space: nowrap; }
+.grid-header { background-color: #ddd; font-weight: bold; }
+.instruction-label { text-align: left; font-weight: bold; font-family: monospace; font-size: 14px; }
+.stage-cell { height: 50px; position: relative; }
+.stage-content { width: 95%; height: 95%; border-radius: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #333; cursor: help; transition: all 0.2s ease-in-out; margin: auto; line-height: 1.2; padding: 2px; }
+.tooltip-text { visibility: hidden; background-color: #555; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; width: max-content; white-space: pre-wrap; }
+.stage-content:hover .tooltip-text { visibility: visible; opacity: 1; }
+.legend { margin: 20px auto; display: flex; justify-content: center; gap: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; width: fit-content; flex-wrap: wrap; }
+.legend-item { display: inline-flex; align-items: center; gap: 8px; }
+.legend-color-box { width: 20px; height: 20px; border-radius: 4px; border: 2px solid; }
+.register-name-cell { font-family: monospace; text-align: left !important; padding-left: 10px !important; }
+.register-value-cell { font-family: monospace; }
+.register-value-cell.changed { background-color: #FFD700; transition: background-color 0.1s ease-in; }
+.hazard-source-highlight { border: 3px solid #FF4500 !important; box-shadow: 0 0 10px rgba(255, 69, 0, 0.7);background-color: #ffe5e5; }
+.forwarding-destination-highlight { border: 3px solid #007BFF !important; box-shadow: 0 0 10px rgba(0, 123, 255, 0.7); background-color: #cce5ff !important; }
+.highlighted-search {
+    background-color: yellow !important;
+    border: 2px solid orange !important;
+}
+#arrow-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.arrow { stroke: #FF4500; stroke-width: 2.5; fill: none; stroke-dasharray: 5; animation: dash 0.5s linear infinite; marker-end: url(#arrowhead); }
+@keyframes dash { to { stroke-dashoffset: -10; } }
+
+
+.missing-signals-box {
+    max-width: 900px;
+    margin: 10px auto 25px auto; /* Center the box and add space */
+    padding: 20px;
+    border: 1px solid #ffb300;
+    background-color: #fff8e1;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    position: relative;
+    color: #5b4d24;
+}
+.missing-signals-header {
+    display: flex;
+    align-items: center;
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: #c58600;
+}
+.missing-signals-box p {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    line-height: 1.5;
+}
+.missing-signals-list {
+    column-count: 3; /* Arrange signals in columns for compactness */
+    column-gap: 20px;
+}
+.missing-signals-list h4 {
+    margin-top: 0;
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+.missing-signals-list ul {
+    list-style-type: none;
+    padding-left: 0;
+    margin: 0 0 15px 0;
+}
+.missing-signals-list li {
+    margin-bottom: 5px;
+}
+.missing-signals-list li code {
+    font-family: monospace;
+    background-color: #f0e9d1;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.signal-category-block {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid; /* For older browser compatibility */
+    page-break-inside: avoid;       /* For older browser compatibility */
+    padding: 5px; /* Adds a little internal spacing */
+}
+.close-btn {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 24px;
+    font-weight: bold;
+    color: #c58600;
+    cursor: pointer;
+    line-height: 1;
+}
+.close-btn:hover {
+    color: #5b4d24;
+
+.stage-content {
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.stag0e-content br + span {
+    opacity: 0.9;
+}
+}
+#memActivityTable thead tr {
+        background-color: #1e3a8a; /* Deep blue */
+        color: white;
+    }
+    #memActivityTable th {
+        font-weight: 600;
+        text-align: center;
+    }
+
+.stalled-stage {
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255, 0, 0, 0.2),
+      rgba(255, 0, 0, 0.2) 10px,
+      rgba(255, 0, 0, 0.3) 10px,
+      rgba(255, 0, 0, 0.3) 20px
+    );
+    border: 2px solid red !important;
+    animation: pulse-stall 1s infinite;
+}
+.bubble-stage {
+    background-color: #e0e0e0 !important;
+    border: 2px dashed #999 !important;
+    color: #666;
+    font-style: italic;
+    opacity: 0.7;
+}
+
+@keyframes pulse-stall {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+.flushed-stage {
+    background-color: #ffcccc !important;
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+
+/* --- TIMELINE / RESOURCE VISUALIZATION (Centered & Fixed) --- */
+#resource-panel {
+    margin: 20px auto;
+    width: fit-content;      /* Shrink to fit content */
+    min-width: 600px;        
+    max-width: 98%;          
+    background-color: #fff;
+    border: 1px solid #ccc;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.timeline-scroll-wrapper {
+    overflow-x: auto;
+    width: 100%;
+    padding-bottom: 5px;
+}
+
+.resource-grid { 
+    display: grid; 
+    gap: 0; 
+    background-color: #fff; 
+    width: max-content; 
+    border-top: 1px solid #ccc;
+    border-collapse: collapse; 
+}
+
+/* Sticky Row Labels (First Column) */
+.resource-row-label { 
+    position: sticky;
+    left: 0;
+    z-index: 20; 
+    background-color: #1e3a8a; 
+    color: #fff;
+    padding: 0 8px; 
+    font-weight: 600; 
+    font-size: 12px; 
+    text-align: right; 
+    display: flex; 
+    align-items: center; 
+    justify-content: flex-end;
+    border-bottom: 1px solid #4a6fa5;
+    border-right: 1px solid #ccc; 
+    height: 26px; 
+    box-sizing: border-box; /* Include padding in width */
+}
+
+/* Sticky Header Corner (Top Left) */
+.grid-header.sticky-corner {
+    position: sticky;
+    left: 0;
+    z-index: 21;
+    background-color: #1e3a8a; 
+    color: #fff;
+    border: none;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid #ccc;
+    height: 26px;
+    box-sizing: border-box;
+}
+
+.resource-cell { 
+    width: 100%; /* Fill the grid column */
+    height: 26px; 
+    background-color: #fff; 
+    box-sizing: border-box; 
+    border-right: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+}
+
+/* Header Cells (Cycle Numbers) - FIXED ALIGNMENT */
+.grid-header.timeline-tick {
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer; 
+    background-color: #1e3a8a; 
+    color: white;
+    user-select: none;
+    height: 26px;
+    width: 100%; /* Fill the grid column perfectly */
+    padding: 0;  /* Remove padding to ensure perfect center */
+    
+    /* Flexbox for absolute centering */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    border-right: 1px solid #4a6fa5;
+    box-sizing: border-box;
+}
+.grid-header.timeline-tick:hover {
+    background-color: #3b82f6 !important; 
+}
+
+/* Colors */
+.res-active-ALU { background-color: #4b9aef !important; }
+.res-active-LSU { background-color: #cf66ff !important; }
+.res-active-BRU { background-color: #28a745 !important; }
+.res-active-MDU { background-color: #ff9933 !important; }
+.res-active-HAZ { background-color: #FF4500 !important; }
+.res-active-FLUSH { background-color: #dc3545 !important; }
+.res-active-STALL { 
+    background-color: #e0e0e0 !important; 
+    background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px);
+}
+
+/* Current Cycle Highlight */
+.current-cycle-column {
+    background-color: #fff9c4; 
+    border-left: 2px solid #ffc107 !important;
+    border-right: 2px solid #ffc107 !important;
+    z-index: 10;
+}
+
+
+</style>
+</head>
+<body>
+<h2>Pipeline Animation with Register State</h2>
+
+<div style="font-size: 14px; margin-bottom: 10px;">
+
+
+    <div id="missing-signals-container" class="missing-signals-box">
+        <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
+        <div class="missing-signals-header">
+            <span style="font-size: 20px; margin-right: 10px;">⚠️</span>
+            <strong>Missing Signals Detected</strong>
+        </div>
+        <p>The animation may not work as expected because the following signals were not found in your VCD file. Please check the signal names in your hardware design.</p>
+        <div class="missing-signals-list">
+    <div class="signal-category-block"><h4>Category: <code>MEM</code></h4><ul><li><code>addr</code></li><li><code>rdata</code></li><li><code>wdata</code></li><li><code>wrEn</code></li></ul></div><div class="signal-category-block"><h4>Category: <code>Stall</code></h4><ul><li><code>IF</code></li><li><code>ID</code></li></ul></div><div class="signal-category-block"><h4>Category: <code>Control</code></h4><ul><li><code>branch_taken</code></li><li><code>branch_target</code></li><li><code>flush_if</code></li><li><code>flush_id</code></li></ul></div>
+</div>
+</div>
+
+<div class="controls">
+    <button id="prevBtn">Previous</button>
+    <span id="cycleCounter">Cycle 0 / {num_cycles}</span>
+    <button id="nextBtn">Next</button>
+    <button id="playPauseBtn">Play</button>
+    
+    <button id="restartBtn">Restart</button>
+    <button id="toggleArrowsBtn">Hide Forwarding</button>  
+    <button id="toggleHazardsBtn">Show Hazards</button>  
+    <button id="toggleSignedBtn">Show Signed</button>
+    <button id="toggleMemActivityBtn">Show MEM Activity</button>
+    <button id="toggleResourcesBtn">Show Resources</button>
+
+    <div class="speed-control-container">
+        <label for="speedControl">Speed:</label>
+        <input type="range" id="speedControl" min="100" max="1000" value="500" step="50">
+        <span id="speedValue">500ms</span>
+        </div>
+        
+
+         </div>
+
+        <div class="legend">
+            <input type="text" id="searchBox" placeholder="Search PC, instruction or register ">
+            <button onclick="resetPipelineFilter()" style="padding: 4px 10px;">Reset</button>
+            <div class="legend-item"><div class="legend-color-box" style="border-color: #FF4500; background-color: #fff2e6;"></div><span>Hazard Source</span></div>
+            <div class="legend-item"><div class="legend-color-box" style="border-color: #007BFF; background-color: #cce5ff;"></div><span>Forwarding Destination</span></div>
+         </div>
+
+    <!-- MEM Activity Panel -->
+    <div id="mem-activity-panel" style="display: none; margin-top: 20px; max-width: 1000px; margin-left: auto; margin-right: auto;">
+        <h3>Memory Activity (current cycle)</h3>
+        <table id="memActivityTable" style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Cycle</th>
+                
+                    <th style="border: 1px solid #ddd; padding: 8px;">Address</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Write Data</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Read Data</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">WrEn</th>
+                
+                </tr>
+            </thead>
+            <tbody id="memActivityTbody">
+                <!-- Filled dynamically -->
+            </tbody>
+        </table>
+    </div>
+
+    <div id="resource-panel" style="display: none;">
+        <div style="padding: 10px 15px; background: #f1f1f1; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; font-size: 16px; color: #333;">Execution Timeline</h3>
+            
+            <div style="font-size: 11px; display: flex; gap: 10px; margin-top: 5px;">
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#4b9aef; margin-right:4px; border:1px solid #999;"></span>ALU</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#cf66ff; margin-right:4px; border:1px solid #999;"></span>Ld/St U</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#28a745; margin-right:4px; border:1px solid #999;"></span>BRU</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#FF4500; margin-right:4px; border:1px solid #999;"></span>Forwarding</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#dc3545; margin-right:4px; border:1px solid #999;"></span>Flush</span>
+                <span style="display:flex; align-items:center;"><span style="width:10px; height:10px; background:#e0e0e0; margin-right:4px; border:1px solid #999;"></span>Stall</span>
+            </div>
+        </div>
+
+        <div class="timeline-scroll-wrapper">
+            <div id="resourceDisplay" class="resource-grid"></div>
+        </div>
+    </div>
+
+    <div class="content-wrapper">
+        <div class="pipeline-container">
+            
+            
+
+            <h3>Pipeline Stages</h3>
+            <div style="position: relative;">
+                <div id="pipelineDisplay" class="pipeline-grid" style="display: grid;"></div>
+                <svg id="arrow-svg"></svg>
+            </div>
+        </div>
+
+
+        <div class="register-container">
+            <h3>Register File State</h3>
+            <div id="registerTable" class="register-grid">
+                <div class="grid-header">Register</div>
+                <div class="grid-header">Value</div>
+                <div class="grid-header">Read (EX)</div>
+                <div class="grid-header">Write (WB)</div>
+            </div>
+        </div>
+
+    
+        
+    
+       
+</div>
+
+
+<script>
+    const pipelineData = {"4": [null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000004\nInstruction: addi ra, zero, 4", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000004\nInstruction: addi ra, zero, 4", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000004\nInstruction: addi ra, zero, 4\n--- ALU ---\n0 + 4 = 4", "display_text": "EX<br>0 + 4 \u2192 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000004\nInstruction: addi ra, zero, 4", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000004\nInstruction: addi ra, zero, 4\n--- Hazard Source ---\nWB: x1 = 4", "display_text": "WB<br>x1 = 4", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "8": [null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000008\nInstruction: addi sp, zero, 5", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000008\nInstruction: addi sp, zero, 5", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000008\nInstruction: addi sp, zero, 5\n--- ALU ---\n0 + 5 = 5", "display_text": "EX<br>0 + 5 \u2192 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000008\nInstruction: addi sp, zero, 5\n--- Hazard Source ---", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000008\nInstruction: addi sp, zero, 5\nWB: x2 = 5", "display_text": "WB<br>x2 = 5", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "12": [null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000000c\nInstruction: add gp, ra, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x0000000c\nInstruction: add gp, ra, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x0000000c\nInstruction: add gp, ra, sp\n--- ALU ---\n4 + 5 = 9", "display_text": "EX<br>4 + 5 \u2192 9", "hazard_info": {"forwardA": 2, "forwardB": 1, "source_pc_mem": 8, "source_pc_wb": 4, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x0000000c\nInstruction: add gp, ra, sp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x0000000c\nInstruction: add gp, ra, sp\nWB: x3 = 9", "display_text": "WB<br>x3 = 9", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "16": [null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000010\nInstruction: addi tp, zero, 2047", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000010\nInstruction: addi tp, zero, 2047", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000010\nInstruction: addi tp, zero, 2047\n--- ALU ---\n0 + 2047 = 2047", "display_text": "EX<br>0 + 2047 \u2192 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000010\nInstruction: addi tp, zero, 2047", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000010\nInstruction: addi tp, zero, 2047\n--- Hazard Source ---\nWB: x4 = 2047", "display_text": "WB<br>x4 = 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "20": [null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000014\nInstruction: addi t0, zero, 16", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000014\nInstruction: addi t0, zero, 16", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000014\nInstruction: addi t0, zero, 16\n--- ALU ---\n0 + 16 = 16", "display_text": "EX<br>0 + 16 \u2192 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000014\nInstruction: addi t0, zero, 16\n--- Hazard Source ---", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000014\nInstruction: addi t0, zero, 16\nWB: x5 = 16", "display_text": "WB<br>x5 = 16", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null, null], "24": [null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000018\nInstruction: sub t1, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000018\nInstruction: sub t1, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000018\nInstruction: sub t1, tp, t0\n--- ALU ---\n2047 - 16 = 2031", "display_text": "EX<br>2047 - 16 \u2192 2031", "hazard_info": {"forwardA": 2, "forwardB": 1, "source_pc_mem": 20, "source_pc_wb": 16, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000018\nInstruction: sub t1, tp, t0\n--- Hazard Source ---", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000018\nInstruction: sub t1, tp, t0\n--- Hazard Source ---\nWB: x6 = 2031", "display_text": "WB<br>x6 = 2031", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": true, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null, null], "28": [null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000001c\nInstruction: xor t2, t1, gp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x0000001c\nInstruction: xor t2, t1, gp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x0000001c\nInstruction: xor t2, t1, gp\n--- ALU ---\n2031 ^ 9 = 2022", "display_text": "EX<br>2031 ^ 9 \u2192 2022", "hazard_info": {"forwardA": 1, "forwardB": 0, "source_pc_mem": 24, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x0000001c\nInstruction: xor t2, t1, gp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x0000001c\nInstruction: xor t2, t1, gp\nWB: x7 = 2022", "display_text": "WB<br>x7 = 2022", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null, null], "32": [null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000020\nInstruction: or s0, t1, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000020\nInstruction: or s0, t1, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000020\nInstruction: or s0, t1, t0\n--- ALU ---\n2031 | 16 = 2047", "display_text": "EX<br>2031 | 16 \u2192 2047", "hazard_info": {"forwardA": 2, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": 24, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000020\nInstruction: or s0, t1, t0", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000020\nInstruction: or s0, t1, t0\nWB: x8 = 2047", "display_text": "WB<br>x8 = 2047", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null, null], "36": [null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000024\nInstruction: and s1, t1, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000024\nInstruction: and s1, t1, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000024\nInstruction: and s1, t1, t0\n--- ALU ---\n2031 & 16 = 0", "display_text": "EX<br>2031 & 16 \u2192 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000024\nInstruction: and s1, t1, t0", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000024\nInstruction: and s1, t1, t0\nWB: x9 = 0", "display_text": "WB<br>x9 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null, null], "40": [null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000028\nInstruction: sll a0, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000028\nInstruction: sll a0, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000028\nInstruction: sll a0, t2, sp\n--- ALU ---\n2022 << 5 = 64704", "display_text": "EX<br>2022 << 5 \u2192 64704", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000028\nInstruction: sll a0, t2, sp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000028\nInstruction: sll a0, t2, sp\nWB: x10 = 64704", "display_text": "WB<br>x10 = 64704", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null, null], "44": [null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000002c\nInstruction: srl a1, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x0000002c\nInstruction: srl a1, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x0000002c\nInstruction: srl a1, t2, sp\n--- ALU ---\n2022 >> 5 = 63", "display_text": "EX<br>2022 >> 5 \u2192 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x0000002c\nInstruction: srl a1, t2, sp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x0000002c\nInstruction: srl a1, t2, sp\nWB: x11 = 63", "display_text": "WB<br>x11 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null, null], "48": [null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000030\nInstruction: sra a2, t2, sp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000030\nInstruction: sra a2, t2, sp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000030\nInstruction: sra a2, t2, sp\n--- ALU ---\n2022 SRA 5 = 63", "display_text": "EX<br>2022 SRA 5 \u2192 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000030\nInstruction: sra a2, t2, sp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000030\nInstruction: sra a2, t2, sp\nWB: x12 = 63", "display_text": "WB<br>x12 = 63", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null, null], "52": [null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000034\nInstruction: slt a3, tp, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000034\nInstruction: slt a3, tp, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000034\nInstruction: slt a3, tp, tp\n--- ALU ---\n2047 SLT 2047 = 0", "display_text": "EX<br>2047 SLT 2047 \u2192 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000034\nInstruction: slt a3, tp, tp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000034\nInstruction: slt a3, tp, tp\nWB: x13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null, null], "56": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000038\nInstruction: slt a3, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000038\nInstruction: slt a3, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000038\nInstruction: slt a3, tp, t0\n--- ALU ---\n2047 SLT 16 = 0", "display_text": "EX<br>2047 SLT 16 \u2192 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000038\nInstruction: slt a3, tp, t0", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000038\nInstruction: slt a3, tp, t0\nWB: x13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null, null], "60": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000003c\nInstruction: slt a3, t0, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x0000003c\nInstruction: slt a3, t0, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x0000003c\nInstruction: slt a3, t0, tp\n--- ALU ---\n16 SLT 2047 = 1", "display_text": "EX<br>16 SLT 2047 \u2192 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x0000003c\nInstruction: slt a3, t0, tp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x0000003c\nInstruction: slt a3, t0, tp\nWB: x13 = 1", "display_text": "WB<br>x13 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null, null], "64": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000040\nInstruction: sltu a3, tp, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000040\nInstruction: sltu a3, tp, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000040\nInstruction: sltu a3, tp, tp\n--- ALU ---\n2047 SLTU 2047 = 0", "display_text": "EX<br>2047 SLTU 2047 \u2192 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000040\nInstruction: sltu a3, tp, tp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000040\nInstruction: sltu a3, tp, tp\nWB: x13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null, null], "68": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000044\nInstruction: sltu a3, tp, t0", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000044\nInstruction: sltu a3, tp, t0", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000044\nInstruction: sltu a3, tp, t0\n--- ALU ---\n2047 SLTU 16 = 0", "display_text": "EX<br>2047 SLTU 16 \u2192 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000044\nInstruction: sltu a3, tp, t0", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000044\nInstruction: sltu a3, tp, t0\nWB: x13 = 0", "display_text": "WB<br>x13 = 0", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null, null], "72": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000048\nInstruction: sltu a3, t0, tp", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000048\nInstruction: sltu a3, t0, tp", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000048\nInstruction: sltu a3, t0, tp\n--- ALU ---\n16 SLTU 2047 = 1", "display_text": "EX<br>16 SLTU 2047 \u2192 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000048\nInstruction: sltu a3, t0, tp", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x00000048\nInstruction: sltu a3, t0, tp\nWB: x13 = 1", "display_text": "WB<br>x13 = 1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, null], "76": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000004c\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x0000004c\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x0000004c\nInstruction: N/A_ASM\n--- ALU ---\n0 N/A_ASM 0 = -1", "display_text": "EX<br>0 N/A_ASM 0 \u2192 -1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x0000004c\nInstruction: N/A_ASM", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "WB", "tooltip": "Stage: WB\nPC: 0x0000004c\nInstruction: N/A_ASM", "display_text": "WB", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}], "80": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000050\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000050\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000050\nInstruction: N/A_ASM\n--- ALU ---\n0 N/A_ASM 0 = -1", "display_text": "EX<br>0 N/A_ASM 0 \u2192 -1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "MEM", "tooltip": "Stage: MEM\nPC: 0x00000050\nInstruction: N/A_ASM", "display_text": "MEM<br>\u2014", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "resource_active": []}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}], "84": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000054\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000054\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "EX", "tooltip": "Stage: EX\nPC: 0x00000054\nInstruction: N/A_ASM\n--- ALU ---\n0 N/A_ASM 0 = -1", "display_text": "EX<br>0 N/A_ASM 0 \u2192 -1", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null, "branch_target_synth": null, "resource_active": ["ALU"]}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}], "88": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x00000058\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}, {"stage": "ID", "tooltip": "Stage: ID\nPC: 0x00000058\nInstruction: N/A_ASM", "display_text": "ID", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}], "92": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, {"stage": "IF", "tooltip": "Stage: IF\nPC: 0x0000005c\nInstruction: N/A_ASM", "display_text": "IF", "hazard_info": {"forwardA": 0, "forwardB": 0, "source_pc_mem": null, "source_pc_wb": null}, "is_hazard_source": false, "is_stalled": false, "is_flushed": false}]};
+    const instructionLabels = [{"id": 4, "label": "PC_0x00000004 | 00400093 (addi ra, zero, 4)"}, {"id": 8, "label": "PC_0x00000008 | 00500113 (addi sp, zero, 5)"}, {"id": 12, "label": "PC_0x0000000c | 002081b3 (add gp, ra, sp)"}, {"id": 16, "label": "PC_0x00000010 | 7ff00213 (addi tp, zero, 2047)"}, {"id": 20, "label": "PC_0x00000014 | 01000293 (addi t0, zero, 16)"}, {"id": 24, "label": "PC_0x00000018 | 40520333 (sub t1, tp, t0)"}, {"id": 28, "label": "PC_0x0000001c | 003343b3 (xor t2, t1, gp)"}, {"id": 32, "label": "PC_0x00000020 | 00536433 (or s0, t1, t0)"}, {"id": 36, "label": "PC_0x00000024 | 005374b3 (and s1, t1, t0)"}, {"id": 40, "label": "PC_0x00000028 | 00239533 (sll a0, t2, sp)"}, {"id": 44, "label": "PC_0x0000002c | 0023d5b3 (srl a1, t2, sp)"}, {"id": 48, "label": "PC_0x00000030 | 4023d633 (sra a2, t2, sp)"}, {"id": 52, "label": "PC_0x00000034 | 004226b3 (slt a3, tp, tp)"}, {"id": 56, "label": "PC_0x00000038 | 005226b3 (slt a3, tp, t0)"}, {"id": 60, "label": "PC_0x0000003c | 0042a6b3 (slt a3, t0, tp)"}, {"id": 64, "label": "PC_0x00000040 | 004236b3 (sltu a3, tp, tp)"}, {"id": 68, "label": "PC_0x00000044 | 005236b3 (sltu a3, tp, t0)"}, {"id": 72, "label": "PC_0x00000048 | 0042b6b3 (sltu a3, t0, tp)"}];
+    const registerData = [{"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000000", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000000", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000000", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x00000000", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000000", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x00000000", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x00000000", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x00000000", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x00000000", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x00000000", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x00000000", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000000", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}, {"x0": "0x00000000", "x1": "0x00000004", "x2": "0x00000005", "x3": "0x00000009", "x4": "0x000007ff", "x5": "0x00000010", "x6": "0x000007ef", "x7": "0x000007e6", "x8": "0x000007ff", "x9": "0x00000000", "x10": "0x0000fcc0", "x11": "0x0000003f", "x12": "0x0000003f", "x13": "0x00000001", "x14": "0x00000000", "x15": "0x00000000", "x16": "0x00000000", "x17": "0x00000000", "x18": "0x00000000", "x19": "0x00000000", "x20": "0x00000000", "x21": "0x00000000", "x22": "0x00000000", "x23": "0x00000000", "x24": "0x00000000", "x25": "0x00000000", "x26": "0x00000000", "x27": "0x00000000", "x28": "0x00000000", "x29": "0x00000000", "x30": "0x00000000", "x31": "0x00000000"}];
+    const numCycles = 24;
+    const colorMap = {"IF": "#ff9933", "ID": "#5cd65c", "EX": "#4b9aefd7", "MEM": "#cf66ffb9", "WB": "#ff2525c6"};
+    const vcd_actual_to_synthetic_pc_map = {"4": 4, "8": 8, "12": 12, "16": 16, "20": 20, "24": 24, "28": 28, "32": 32, "36": 36, "40": 40, "44": 44, "48": 48, "52": 52, "56": 56, "60": 60, "64": 64, "68": 68, "72": 72, "76": 76, "80": 80, "84": 84, "88": 88, "92": 92};
+    const regHighlightData = [{"id_rs1": null, "id_rs2": null, "wb_rd": null}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}, {"id_rs1": 0, "id_rs2": 5, "wb_rd": 0}, {"id_rs1": 1, "id_rs2": null, "wb_rd": 1}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 2}, {"id_rs1": 0, "id_rs2": 16, "wb_rd": 3}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 4}, {"id_rs1": 6, "id_rs2": 3, "wb_rd": 5}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 6}, {"id_rs1": 6, "id_rs2": 5, "wb_rd": 7}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 8}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 9}, {"id_rs1": 7, "id_rs2": 2, "wb_rd": 10}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 11}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 12}, {"id_rs1": 5, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 4, "wb_rd": 13}, {"id_rs1": 4, "id_rs2": 5, "wb_rd": 13}, {"id_rs1": 5, "id_rs2": null, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 13}, {"id_rs1": 0, "id_rs2": null, "wb_rd": 0}];
+    const abiNames = ["zero","ra","sp","gp","tp","t0","t1","t2","s0/fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
+    let currentCycle = 0, animationInterval = null, animationSpeed = 500, showArrows = true;
+    let showHazards = false;
+
+    const pipelineDisplay = document.getElementById('pipelineDisplay');
+    const registerTable = document.getElementById('registerTable');
+    const arrowSvg = document.getElementById('arrow-svg');
+    const cycleCounter = document.getElementById('cycleCounter');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const speedControl = document.getElementById('speedControl');
+    const speedValue = document.getElementById('speedValue');
+    const searchBox = document.getElementById('searchBox');
+
+    const memActivity = [{"cycle": 0, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 1, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 2, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 3, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 4, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 5, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 6, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 7, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 8, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 9, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 10, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 11, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 12, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 13, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 14, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 15, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 16, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 17, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 18, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 19, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 20, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 21, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 22, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}, {"cycle": 23, "addr": null, "wdata": "\u2014", "rdata": 4294967295, "wr_en": false, "rd_en": false, "is_store": false, "is_load": true}];   // inserted by Python string.format
+    const bubbleData = {};
+    const memActivityPanel = document.getElementById('mem-activity-panel');
+    const memActivityTbody = document.getElementById('memActivityTbody');
+    const toggleMemActivityBtn = document.getElementById('toggleMemActivityBtn');
+
+    // --- MODIFICATION: Refactored to build the static grid once ---
+    function populateStaticGrid() {
+        const filterText = searchBox.value.toLowerCase();
+        
+        // Pipeline Headers
+        ['Instruction', 'IF', 'ID', 'EX', 'MEM', 'WB'].forEach(text => {
+            const header = document.createElement('div');
+            header.className = 'grid-header'; 
+            header.textContent = text;
+            pipelineDisplay.appendChild(header);
+        });
+
+        // Instruction Rows
+        // We now iterate over objects: {id: 28, label: "..."}
+        instructionLabels.forEach((item) => {
+            const pcId = item.id; // This is now the REAL address (e.g., 28, 32)
+            const text = item.label;
+
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'grid-cell instruction-label';
+            labelDiv.id = `instr-label-${pcId}`;
+            labelDiv.textContent = text;
+            pipelineDisplay.appendChild(labelDiv);
+
+            for (let i = 0; i < 5; i++) {
+                const stageCell = document.createElement('div');
+                stageCell.className = 'grid-cell stage-cell';
+                // IDs are now like: stage-cell-28-0, stage-cell-32-1
+                stageCell.id = `stage-cell-${pcId}-${i}`; 
+                pipelineDisplay.appendChild(stageCell);
+            }
+        });
+        // Register Table
+
+        for (let i = 0; i < 32; i++) {
+            const nameCell = document.createElement('div');
+            nameCell.className = 'grid-cell register-name-cell';
+            nameCell.textContent = `x${i} (${abiNames[i]})`;
+            registerTable.appendChild(nameCell);
+
+            const valueCell = document.createElement('div');
+            valueCell.className = 'grid-cell register-value-cell';
+            valueCell.id = `reg-val-${i}`;
+            registerTable.appendChild(valueCell);
+
+            const readCell = document.createElement('div');
+            readCell.className = 'grid-cell';
+            readCell.id = `reg-read-${i}`;
+            registerTable.appendChild(readCell);
+
+            const writeCell = document.createElement('div');
+            writeCell.className = 'grid-cell';
+            writeCell.id = `reg-write-${i}`;
+            registerTable.appendChild(writeCell);
+        }
+    }
+
+    function updateDisplay() {
+        cycleCounter.textContent = `Cycle ${currentCycle} / ${numCycles - 1}`;
+        updatePipelineDisplay();
+        updateRegisterTable();
+        updateResourceDisplay();
+
+        if (memActivityPanel.style.display !== 'none') {
+            renderMemActivityForCycle(currentCycle);
+        }  
+
+        prevBtn.disabled = currentCycle === 0;
+        nextBtn.disabled = currentCycle === numCycles - 1;
+        // Use timeout to ensure DOM is updated before calculating arrow positions
+        setTimeout(updateArrows, 0);
+
+        
+
+     }
+
+        function updatePipelineDisplay() {
+            document.querySelectorAll('.stage-cell').forEach(c => c.innerHTML = '');
+            document.querySelectorAll('.instruction-label').forEach(l => l.classList.remove('hazard-source-highlight'));
+            
+            Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+                // 1. Draw the Main Instruction (The Stall)
+                const instrCycleData = cycleData[currentCycle];
+                if (instrCycleData) {
+                    if (showHazards && instrCycleData.is_hazard_source) {
+                        const label = document.getElementById(`instr-label-${synthPc}`);
+                        if (label) label.classList.add('hazard-source-highlight');
+                    }
+                    const stageIdx = {IF:0, ID:1, EX:2, MEM:3, WB:4}[instrCycleData.stage];
+                    const stageCell = document.getElementById(`stage-cell-${synthPc}-${stageIdx}`);
+                    
+                    if (stageCell) {
+                        const contentDiv = document.createElement('div');
+                        contentDiv.className = 'stage-content';
+                        contentDiv.style.backgroundColor = colorMap[instrCycleData.stage];
+                        contentDiv.id = `content-${synthPc}-${instrCycleData.stage}`;
+
+                        if (instrCycleData.is_stalled) {
+                            contentDiv.classList.add('stalled-stage');
+                            contentDiv.innerHTML = "<strong>STALL</strong><br>" + instrCycleData.display_text;
+                        } else {
+                            contentDiv.innerHTML = instrCycleData.display_text;
+                        }
+
+                        if (instrCycleData.is_flushed) {
+                            contentDiv.classList.add('flushed-stage');
+                            contentDiv.innerHTML += "<br><strong>(FLUSHED)</strong>";
+                        }
+
+                        if (instrCycleData.stage === "EX") {
+                            const hasForwarding = (instrCycleData.hazard_info.forwardA !== 0) || (instrCycleData.hazard_info.forwardB !== 0);
+                            if (showArrows && hasForwarding) contentDiv.classList.add('forwarding-destination-highlight');
+                        }
+                        
+                        const tooltipSpan = document.createElement('span');
+                        tooltipSpan.className = 'tooltip-text';
+                        tooltipSpan.textContent = instrCycleData.tooltip;
+                        contentDiv.appendChild(tooltipSpan);
+                        stageCell.appendChild(contentDiv);
+                    }
+                }
+
+                // 2. Draw the Bubble (The Gap) - NEW LOGIC
+                const bubbleStage = bubbleData[synthPc] ? bubbleData[synthPc][currentCycle] : null;
+                if (bubbleStage) {
+                    const stageIdx = {IF:0, ID:1, EX:2, MEM:3, WB:4}[bubbleStage];
+                    const stageCell = document.getElementById(`stage-cell-${synthPc}-${stageIdx}`);
+                    
+                    if (stageCell) {
+                        const contentDiv = document.createElement('div');
+                        contentDiv.className = 'stage-content bubble-stage';
+                        contentDiv.innerHTML = "Bubble<br>(NOP)";
+                        
+                        const tooltipSpan = document.createElement('span');
+                        tooltipSpan.className = 'tooltip-text';
+                        tooltipSpan.textContent = "Pipeline Bubble\nInserted due to stall in previous stage";
+                        contentDiv.appendChild(tooltipSpan);
+                        
+                        stageCell.appendChild(contentDiv);
+                    }
+                }
+            });
+        }
+
+        function filterPipelineInstruction() {
+            const query = searchBox.value.toLowerCase().trim();
+            if (!query) return;
+
+            let matchFound = false;
+
+            instructionLabels.forEach((item) => {
+                const pcId = item.id; // Raw PC
+                const label = item.label;
+                
+                const labelLower = label.toLowerCase();
+                const rowIds = [`instr-label-${pcId}`];
+                for (let i = 0; i < 5; i++) {
+                    rowIds.push(`stage-cell-${pcId}-${i}`);
+                }
+
+                const match = labelLower.includes(query);
+                matchFound = matchFound || match;
+
+                rowIds.forEach(id => {
+                    const elem = document.getElementById(id);
+                    if (elem) {
+                        elem.style.display = match ? '' : 'none';
+                    }
+                });
+            });
+
+            if (!matchFound) {
+                alert("❌ No matching instruction or PC found.");
+            }
+        }
+
+
+            // 🟡 Add listener for Enter key
+            searchBox.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+            filterPipelineInstruction();
+            }
+            });
+
+
+            // 🟡 Add reset function (optional)
+            function resetPipelineFilter() {
+                instructionLabels.forEach((item) => {
+                    const pcId = item.id;
+                    const rowIds = [`instr-label-${pcId}`];
+                    for (let i = 0; i < 5; i++) {
+                        rowIds.push(`stage-cell-${pcId}-${i}`);
+                    }
+                    rowIds.forEach(id => {
+                        const elem = document.getElementById(id);
+                        if (elem) elem.style.display = '';
+                    });
+                });
+            }
+
+    
+        function updateRegisterTable() {
+            const currentRegs = registerData[currentCycle] || {};
+            const prevRegs = currentCycle > 0 ? registerData[currentCycle - 1] : {};
+            const highlights = regHighlightData[currentCycle] || {};
+
+            for (let i = 0; i < 32; i++) {
+                const valCell = document.getElementById(`reg-val-${i}`);
+                const currentVal = currentRegs[`x${i}`] || '0x00000000';
+                const prevVal = prevRegs[`x${i}`] || '0x00000000';
+
+                // Show decimal as *binary* if hex digits are only 0/1; otherwise as hex
+                let displayValue = currentVal;
+                if (typeof currentVal === 'string' && currentVal.startsWith('0x')) {
+                    const digits = currentVal.slice(2);
+                    let dec = Number.NaN;
+
+                    if (/^[01]+$/.test(digits)) {
+                        dec = parseInt(digits, 2);
+                    } else if (/^[0-9a-fA-F]+$/.test(digits)) {
+                        dec = parseInt(digits, 16);
+                    }
+
+                    if (!Number.isNaN(dec)) {
+                        displayValue = `${currentVal} (${dec})`;
+                    }
+                }
+
+                valCell.textContent = displayValue;
+                const readCell = document.getElementById(`reg-read-${i}`);
+                const writeCell = document.getElementById(`reg-write-${i}`);
+                readCell.textContent = '';
+                writeCell.textContent = '';
+
+                // ✅ Only show dots from cycle 3 onward
+                if (currentCycle >= 3) {
+                    if (highlights.id_rs1 === i || highlights.id_rs2 === i) {
+                        readCell.innerHTML = '<span style="color: #007BFF; font-size: 20px;">●</span>';
+                    }
+                    if (i !== 0 && highlights.wb_rd === i) {
+                        writeCell.innerHTML = '<span style="color: #FF4500; font-size: 20px;">●</span>';
+                    }
+                }
+
+                valCell.classList.toggle('changed', currentVal !== prevVal);
+            }
+        }
+
+        
+        const toggleResourcesBtn = document.getElementById('toggleResourcesBtn');
+        const resourcePanel = document.getElementById('resource-panel');
+
+        toggleResourcesBtn.addEventListener('click', () => {
+            const isHidden = resourcePanel.style.display === 'none';
+            resourcePanel.style.display = isHidden ? 'block' : 'none';
+            toggleResourcesBtn.textContent = isHidden ? 'Hide Resources' : 'Show Resources';
+            if (isHidden) updateResourceDisplay(); // Redraw if showing
+        });
+
+
+        function updateResourceDisplay() {
+        const grid = document.getElementById('resourceDisplay');
+        const resourcePanel = document.getElementById('resource-panel');
+        
+        if (resourcePanel.style.display === 'none') return;
+        
+        grid.innerHTML = ''; 
+
+        const units = ["ALU", "LSU", "BRU", "MDU", "HAZ", "FLUSH", "STALL"];
+        
+        const startCycle = 0;
+        const endCycle = numCycles;
+        const totalCols = endCycle - startCycle;
+        
+        // --- FIX: Explicit column sizing ---
+        // Label Column: 80px
+        // Data Columns: 30px each (Fixed size)
+        grid.style.gridTemplateColumns = `80px repeat(${totalCols}, 30px)`;
+
+        // --- Header Row ---
+        const corner = document.createElement('div');
+        corner.className = 'grid-header sticky-corner';
+        corner.textContent = "Unit"; 
+        grid.appendChild(corner);
+        
+        for (let c = startCycle; c < endCycle; c++) {
+            const head = document.createElement('div');
+            head.className = 'grid-header timeline-tick';
+            head.textContent = c;
+            
+            if (c === currentCycle) {
+                head.style.color = "#ffeb3b"; 
+                head.style.borderBottom = "3px solid #ffeb3b";
+            }
+            
+            head.onclick = () => {
+                currentCycle = c;
+                updateDisplay();
+            };
+            grid.appendChild(head);
+        }
+
+        // --- Data Rows ---
+        units.forEach(unit => {
+            const label = document.createElement('div');
+            label.className = 'resource-row-label';
+            
+            if (unit === "HAZ") label.textContent = "FWD";
+            else if (unit === "FLUSH") label.textContent = "Flush";
+            else if (unit === "STALL") label.textContent = "Stall";
+            else label.textContent = unit;
+            
+            grid.appendChild(label);
+
+            for (let c = startCycle; c < endCycle; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'resource-cell';
+                
+                if (c === currentCycle) cell.classList.add('current-cycle-column');
+
+                let isActive = false;
+                let tooltipText = "";
+
+                for (const [synthPc, cycleData] of Object.entries(pipelineData)) {
+                    const stageData = cycleData[c];
+                    if (!stageData) continue;
+
+                    // 1. HAZARD (Specific logic)
+                    if (unit === "HAZ") {
+                        if (stageData.stage === 'EX' && stageData.hazard_info && 
+                           (stageData.hazard_info.forwardA || stageData.hazard_info.forwardB)) {
+                            isActive = true;
+                            tooltipText = "Data Hazard (Forwarding)";
+                        }
+                    }
+                    // 2. FLUSH (Specific logic)
+                    else if (unit === "FLUSH") {
+                        if (stageData.is_flushed) {
+                            isActive = true;
+                            tooltipText = "Pipeline Flush";
+                        }
+                    }
+                    // 3. STALL (Specific logic)
+                    else if (unit === "STALL") {
+                        if (stageData.is_stalled) {
+                            isActive = true;
+                            tooltipText = "Pipeline Stalled";
+                        }
+                    }
+                    // 4. FUNCTIONAL UNITS (ALU, LSU, BRU, MDU)
+                    // FIX: We removed "stageData.stage === 'EX'" check.
+                    // Now we rely purely on the resource list we built in Python.
+                    else {
+                        if (stageData.hazard_info && stageData.hazard_info.resource_active) {
+                            const res = stageData.hazard_info.resource_active;
+                            const isUsingUnit = Array.isArray(res) ? res.includes(unit) : res === unit;
+                            
+                            if (isUsingUnit) {
+                                isActive = true;
+                                // Safe tooltip extraction
+                                const parts = stageData.tooltip.split('\n');
+                                tooltipText = parts.length > 2 ? parts[2] : "Active";
+                            }
+                        }
+                    }
+                    if (isActive) break; 
+                }
+
+                if (isActive) {
+                    cell.classList.add(`res-active-${unit}`);
+                    cell.title = `${unit} Cycle ${c}\n${tooltipText}`;
+                    cell.style.cursor = "help";
+                }
+                grid.appendChild(cell);
+            }
+        });
+        
+        // Auto-Scroll to keep current cycle in view
+        setTimeout(() => {
+            const wrapper = document.querySelector('.timeline-scroll-wrapper');
+            const currentHead = grid.children[currentCycle + 1]; 
+            if (wrapper && currentHead) {
+                const scrollLeft = wrapper.scrollLeft;
+                const clientWidth = wrapper.clientWidth;
+                const elemLeft = currentHead.offsetLeft;
+                
+                // Only scroll if out of bounds to avoid jitter
+                if (elemLeft < scrollLeft || elemLeft > (scrollLeft + clientWidth)) {
+                    const targetPos = elemLeft - (clientWidth / 2) + 15;
+                    wrapper.scrollTo({ left: targetPos, behavior: 'smooth' });
+                }
+            }
+        }, 10);
+    }
+    
+    
+
+
+
+
+
+    
+    // --- NEW: Function to draw a single arrow ---
+    // --- UPDATED: Smarter Arrow Drawing Logic with Double Brackets ---
+    function drawArrow(fromElem, toElem, type) {
+        if (!fromElem || !toElem) return;
+        const svgRect = arrowSvg.getBoundingClientRect();
+        const fromRect = fromElem.getBoundingClientRect();
+        const toRect = toElem.getBoundingClientRect();
+
+        let startX, startY, endX, endY, d;
+
+        if (type === "branch") {
+            // Branch: Smooth S-Curve from Left edge of Source to Right edge of Target
+            
+            // Start: Left edge of the "Taken" box (Vertical Center)
+            startX = fromRect.left - svgRect.left; 
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            
+            // End: Right edge of the Target Instruction Label (Vertical Center)
+            // +5 adds a small buffer so the arrowhead touches the label nicely
+            endX = toRect.right - svgRect.left + 5; 
+            endY = toRect.top + toRect.height / 2 - svgRect.top;
+
+            // Calculate Curve Strength based on distance
+            const dist = Math.abs(startX - endX);
+            const curvePower = Math.min(dist * 0.6, 150); 
+
+            // Cubic Bezier: Start -> Control1 -> Control2 -> End
+            // Control1 pulls LEFT from source, Control2 pulls RIGHT from target
+            d = `M ${startX},${startY} 
+                 C ${startX - curvePower},${startY} 
+                   ${endX + curvePower},${endY} 
+                   ${endX},${endY}`;
+
+        } else {
+            // Hazard: Standard Top-down Arc
+            
+            // Start: Center of Source Cell
+            startX = fromRect.left + fromRect.width / 2 - svgRect.left;
+            startY = fromRect.top + fromRect.height / 2 - svgRect.top;
+            
+            // End: Top Center of Destination Cell
+            endX = toRect.left + toRect.width / 2 - svgRect.left;
+            endY = toRect.top - svgRect.top; 
+
+            // High Arc: Controls are 40px above the points
+            d = `M ${startX},${startY} C ${startX},${startY - 40} ${endX},${endY - 40} ${endX},${endY}`;
+        }
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+
+        // --- Styling ---
+        if (type === "branch") {
+            path.setAttribute('stroke', '#28a745'); // Green
+            path.setAttribute('stroke-width', '3'); // Thicker for emphasis
+            path.setAttribute('fill', 'none');
+            path.setAttribute('marker-end', 'url(#arrowhead-branch)');
+        } else {
+            path.setAttribute('stroke', '#FF4500'); // Red
+            path.setAttribute('stroke-width', '2.5');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('marker-end', 'url(#arrowhead-hazard)');
+            path.setAttribute('class', 'arrow'); 
+        }
+        
+        arrowSvg.appendChild(path);
+    }
+
+    // --- NEW: Function to update all arrows for the current cycle ---
+    function updateArrows() {
+        if (!showArrows) { arrowSvg.innerHTML = ''; return; }
+        
+        // Define markers: Red for Hazard, Green for Branch
+        arrowSvg.innerHTML = `
+            <defs>
+                <marker id="arrowhead-hazard" markerWidth="5" markerHeight="3.5" refX="0" refY="1.75" orient="auto">
+                    <polygon points="0 0, 5 1.75, 0 3.5" fill="#FF4500" />
+                </marker>
+                <marker id="arrowhead-branch" markerWidth="6" markerHeight="4" refX="4" refY="2" orient="auto">
+                    <polygon points="0 0, 6 2, 0 4" fill="#28a745" />
+                </marker>
+            </defs>`;
+
+        Object.entries(pipelineData).forEach(([synthPc, cycleData]) => {
+            const instrCycleData = cycleData[currentCycle];
+            
+            // --- DEBUG INJECTION START ---
+            if (instrCycleData && instrCycleData.stage === 'EX') {
+                const h = instrCycleData.hazard_info;
+                if (h.forwardA !== 0 || h.forwardB !== 0) {
+                     console.log(`Cycle ${currentCycle}: Drawing Hazard for PC ${synthPc}`);
+                     console.log("Hazard Info:", h);
+                     
+                     // Check DOM existence
+                     const destElem = document.getElementById(`content-${synthPc}-EX`);
+                     const srcMem = h.source_pc_mem ? document.getElementById(`content-${h.source_pc_mem}-MEM`) : null;
+                     const srcWb = h.source_pc_wb ? document.getElementById(`content-${h.source_pc_wb}-WB`) : null;
+
+                     console.log("DOM Elements Found:", { 
+                        DEST: !!destElem, 
+                        SRC_MEM: !!srcMem, 
+                        SRC_WB: !!srcWb 
+                     });
+                }
+            }
+            // --- DEBUG INJECTION END ---
+
+
+            if (instrCycleData && instrCycleData.stage === 'EX') {
+                const hazardInfo = instrCycleData.hazard_info;
+                const toElem = document.getElementById(`content-${synthPc}-EX`);
+
+                // 1. Hazard Arrows (Red)
+                if (hazardInfo.source_pc_mem !== null) 
+                    drawArrow(document.getElementById(`content-${hazardInfo.source_pc_mem}-MEM`), toElem, "hazard");
+                if (hazardInfo.source_pc_wb !== null) 
+                    drawArrow(document.getElementById(`content-${hazardInfo.source_pc_wb}-WB`), toElem, "hazard");
+
+                // 2. Branch Arrow (Green)
+                // Draws from EX stage to the Target Instruction in IF stage (next cycle prediction)
+                if (hazardInfo.branch_target_synth !== null && hazardInfo.branch_target_synth !== undefined) {
+                    // The target instruction will appear in IF. 
+                    // NOTE: We target the ROW of the target instruction.
+                    // Since we don't know if it's in IF *this* cycle (it's usually fetched next cycle),
+                    // we point to the Instruction Label or a placeholder cell.
+                    
+                    // Try to find the label of the target PC
+                    const targetLabel = document.getElementById(`instr-label-${hazardInfo.branch_target_synth}`);
+                    
+                    if (targetLabel) {
+                        drawArrow(toElem, targetLabel, "branch");
+                    }
+                }
+            }
+        });
+    }
+
+    function renderMemActivityForCycle(cycle) {
+        memActivityTbody.innerHTML = '';
+        const entry = memActivity[cycle];
+        
+        if (!entry) { 
+            memActivityTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No data</td></tr>'; 
+            return; 
+        }
+        
+        const tr = document.createElement('tr');
+        
+        // Cycle
+        let td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = entry.cycle; tr.appendChild(td);
+        
+        // Address
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = (entry.addr !== undefined && entry.addr !== null) ? entry.addr : 'N/A'; tr.appendChild(td);
+        
+        // Write Data (Handle "—" logic passed from Python)
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = (entry.wdata !== undefined && entry.wdata !== null) ? entry.wdata : '—'; tr.appendChild(td);
+        
+        // Read Data (Handle "—" logic passed from Python)
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        // Check for the explicit exclusion from Python, otherwise show val
+        td.textContent = (entry.rdata !== undefined && entry.rdata !== null) ? entry.rdata : '—'; tr.appendChild(td);
+        
+        // WrEn
+        td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px'; td.style.textAlign='center'; 
+        td.textContent = entry.wr_en ? '1' : '0'; tr.appendChild(td);
+        
+        memActivityTbody.appendChild(tr);
+    }
+
+
+
+    function nextCycle() { if (currentCycle < numCycles - 1) { currentCycle++; updateDisplay(); } else { stopAnimation(); } }
+    function prevCycle() { if (currentCycle > 0) { currentCycle--; updateDisplay(); } }
+    function startAnimation() {
+        if (animationInterval) return;
+        playPauseBtn.textContent = 'Pause';
+        animationInterval = setInterval(nextCycle, animationSpeed);
+    }
+    function stopAnimation() {
+        clearInterval(animationInterval);
+        animationInterval = null;
+        playPauseBtn.textContent = 'Play';
+    }
+    function restartAnimation() { stopAnimation(); currentCycle = 0; updateDisplay(); }
+
+    prevBtn.addEventListener('click', prevCycle);
+    nextBtn.addEventListener('click', nextCycle);
+    restartBtn.addEventListener('click', restartAnimation);
+    playPauseBtn.addEventListener('click', () => animationInterval ? stopAnimation() : startAnimation());
+    searchBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+    filterPipelineInstruction();
+    }
+    });
+    speedControl.addEventListener('input', () => {
+        animationSpeed = speedControl.value;
+        speedValue.textContent = `${animationSpeed}ms`;
+        if (animationInterval) { stopAnimation(); startAnimation(); }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') nextCycle();
+        if (e.key === 'ArrowLeft') prevCycle();
+    });
+    document.getElementById('toggleArrowsBtn').addEventListener('click', () => {
+        showArrows = !showArrows;
+        document.getElementById('toggleArrowsBtn').textContent = showArrows ? 'Hide Forwaring' : 'Show Forwaring';
+        updateDisplay(); // re-render (clears or draws arrows accordingly)
+    });
+    document.getElementById('toggleHazardsBtn').addEventListener('click', () => {
+        showHazards = !showHazards;
+        document.getElementById('toggleHazardsBtn').textContent = showHazards ? 'Hide Hazards' : 'Show Hazards';
+        updateDisplay(); // re-render pipeline with or without hazard highlights
+    });
+
+    toggleMemActivityBtn.addEventListener('click', () => {
+        const shown = memActivityPanel.style.display !== 'none';
+        memActivityPanel.style.display = shown ? 'none' : 'block';
+        toggleMemActivityBtn.textContent = shown ? 'Show MEM Activity' : 'Hide MEM Activity';
+        if (!shown) {
+            renderMemActivityForCycle(currentCycle);
+        }
+    });
+
+    // Initial setup
+    populateStaticGrid();
+    updateDisplay();
+
+
+
+    document.getElementById('toggleSignedBtn').addEventListener('click', () => {{
+    const signedElems = document.querySelectorAll('.alu-signed');
+    const unsignedElems = document.querySelectorAll('.alu-unsigned');
+
+    signedElems.forEach(el => {{
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    }});
+    unsignedElems.forEach(el => {{
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    }});
+
+    const btn = document.getElementById('toggleSignedBtn');
+    btn.textContent = btn.textContent === 'Show Signed' ? 'Show Unsigned' : 'Show Signed';
+}});
+
+
+</script>
+</body>
+</html>
