@@ -9,30 +9,50 @@ def load_config():
     parser.add_argument("-c", "--config", default="pipeline", help="Optional: Name of the JSON config file (default: pipeline).")
     args = parser.parse_args()
 
-    # --- Resolve VCD File ---
+    # --- 1. Resolve VCD File ---
     vcd_file = args.vcd_file
-    if vcd_file:
-        if not vcd_file.lower().endswith(".vcd") and os.path.exists(vcd_file + ".vcd"):
-            vcd_file = vcd_file + ".vcd"
-        if not os.path.exists(vcd_file):
-            print(f"❌ Error: VCD file '{vcd_file}' not found.")
-            sys.exit(1)
-    else:
-        # Interactive prompt if not provided
-        while True:
-            vcd_file = input("Enter the name of the VCD file (e.g., dump.vcd): ").strip()
-            if not vcd_file.lower().endswith(".vcd") and os.path.exists(vcd_file + ".vcd"):
-                vcd_file = vcd_file + ".vcd"
-            if os.path.exists(vcd_file):
-                break
-            else:
-                print(f"❌ File '{vcd_file}' not found. Please try again.\n")
 
-    # --- Resolve Config File ---
+    # FIX: If no argument provided, ask the user interactively
+    if vcd_file is None:
+        print("ℹ️  No VCD file provided in command line.")
+        while True:
+            user_input = input("Please enter the VCD filename (e.g., task1.vcd): ").strip()
+            if user_input:
+                vcd_file = user_input
+                break
+            print("❌ Input cannot be empty.")
+
+    # 2. Define the default folder (Relative to where you run the script)
+    # Since you run from root, "examples" points to the folder outside src
+    vcd_dir = "examples"
+
+    # 3. Smart Search Logic
+    possible_paths = [
+        vcd_file,                                      # 1. Check current folder (Root)
+        os.path.join(vcd_dir, vcd_file),               # 2. Check examples/ folder
+        vcd_file + ".vcd",                             # 3. Check current + .vcd
+        os.path.join(vcd_dir, vcd_file + ".vcd")       # 4. Check examples/ + .vcd
+    ]
+
+    final_vcd_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            final_vcd_path = p
+            break
+
+    if not final_vcd_path:
+        print(f"❌ Error: Could not find '{vcd_file}' in the current directory or inside '{vcd_dir}/'.")
+        print(f"   Checked locations: {possible_paths}")
+        sys.exit(1)
+        
+    print(f"📂 Processing: {final_vcd_path}")
+
+    # --- 4. Resolve Config File ---
     config_input = args.config
     if not config_input.endswith(".json"):
         config_input += ".json"
     
+    # Since 'configs' is also in the root, simple paths work
     if os.path.exists(config_input):
         config_file = config_input
     elif os.path.exists(os.path.join("configs", config_input)):
@@ -40,11 +60,11 @@ def load_config():
     elif os.path.exists(os.path.join("configs", os.path.basename(config_input))):
         config_file = os.path.join("configs", os.path.basename(config_input))
     else:
-        config_file = config_input 
+        config_file = config_input # Let it fail in the try-block below
 
     print(f"⚙️  Using Configuration: {config_file}")
 
-    # --- Load JSON ---
+    # --- 5. Load JSON ---
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -60,7 +80,7 @@ def load_config():
                     data[key] = [str(templ).replace("{i}", str(i))]
         
         return {
-            "vcd_path": vcd_file,
+            "vcd_path": final_vcd_path,
             "signal_map": data,
             "config_path": config_file
         }

@@ -1,8 +1,8 @@
-import config
-import vcd_reader
-import simulation
-import html_view
-import webbrowser
+import webbrowser  # <--- FIX: Added this missing import
+from . import config
+from . import vcd_reader
+from . import simulation
+from . import html_view
 
 def main():
     # 1. Setup
@@ -25,6 +25,8 @@ def main():
         f.write(html_str)
         
     print(f"✅ Successfully generated '{output_file}'.")
+    
+    # This line caused the error before because the import was missing
     webbrowser.open_new_tab(output_file)
 
     # Missing Signals Summary

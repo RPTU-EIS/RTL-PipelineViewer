@@ -1,0 +1,6 @@
+# Ignore generated HTML animations
+*.html
+
+# Ignore Python cache files
+__pycache__/
+*.pyc

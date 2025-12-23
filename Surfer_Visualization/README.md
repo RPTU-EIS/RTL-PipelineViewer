@@ -8,7 +8,7 @@ This toolkit provides a configurable pipeline to transform raw VCD (Value Change
 
 Raw VCDs from complex RTL simulations, such as RISC-V pipelines, are often impractically large and filled with cryptic, auto-generated signal names. This hinders efficient debugging.
 
-![Screenshot of the animation](images/visualization.png)
+![Screenshot of the animation](assets/visualization.png)
 
 > **Before:** A raw VCD file presents a flat, unfiltered list of thousands of signals, making analysis difficult.
 
@@ -17,7 +17,7 @@ The script filters, renames, and groups signals according to the YAML specificat
 
 A provided Surfer script (`load_filtered_vcd.sucl`) then auto-loads this processed VCD into the viewer, automatically applying the complete signal hierarchy defined in the configuration.
 
-![Screenshot of the animation](images/visualization2.png)
+![Screenshot of the animation](assets/visualization2.png)
 > **After:** The processed VCD loads instantly with signals renamed and organized into logical groups (e.g., by pipeline stage).
 
 ---

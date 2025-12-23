@@ -2,7 +2,7 @@
 
 An interactive **HTML visualization framework** for analyzing and debugging **RISC-V processor microarchitectures** using VCD (Value Change Dump) simulation traces.
 
-![Pipeline Visualization](images/Pipiline_Visualization.png)
+![Pipeline Visualization](assets/Pipiline_Visualization.png)
 
 *Supports pipelined and multi-cycle RISC-V processors, with both animated and static visualization modes.*
 
@@ -112,7 +112,7 @@ python multicycle_riscv_visualizer.py your_vcd_file.vcd
 Output:
 - `multicycle_animation.html`
 
-![Multi-Cycle Visualization](images/Multistage_Visualization.png)
+![Multi-Cycle Visualization](assets/Multistage_Visualization.png)
 
 ---
 
@@ -159,7 +159,7 @@ pip install vcdvcd capstone pandas
 │   ├── multicycle.json
 │   ├── pipeline.json
 │   └── example.json
-├── images/
+├── assets/
 │   ├── Pipiline_Visualization.png
 │   └── Multistage_Visualization.png
 ```
