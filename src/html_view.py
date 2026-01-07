@@ -31,7 +31,7 @@ def generate_html(sim_results):
             missing_html += "</div></div>"
 
     # 3. HTML Template (Raw String)
-    # NOTE: We use single brackets { } for CSS and JS. We use .replace() to inject data.
+   
     html_template = r"""
 <html><head><title>Pipeline & Register Animation</title>
 <style>
@@ -547,7 +547,7 @@ body { font-family: sans-serif; margin: 20px; } h2, h3 { text-align: center; }
 </script>
 </body></html>
 """
-    # Use REPLACE instead of format for safety against CSS braces
+    
     html = html_template
     html = html.replace("{num_cycles}", str(sim_results["num_cycles"]))
     html = html.replace("{pipeline_data_js}", pipeline_json)

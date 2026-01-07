@@ -9,9 +9,7 @@ def remove_comments(json_str):
     Removes C-style // comments from a JSON string.
     This allows students to annotate their config files.
     """
-    # Regex to capture // comments but ignore URLs (like http://) 
-    # or markers inside strings. For simplicity in this context, 
-    # we just strip everything after // on a line.
+
     lines = json_str.splitlines()
     clean_lines = []
     for line in lines:
